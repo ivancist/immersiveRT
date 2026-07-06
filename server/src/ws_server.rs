@@ -2,8 +2,12 @@ use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
-use tokio_tungstenite::accept_async;
+use tokio_tungstenite::accept_async_with_config;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message;
+
+/// Maximum WebSocket message / frame size — ample for IMU packets, blocks 64 MiB default abuse.
+const MAX_WS_MESSAGE_BYTES: usize = 64 * 1024; // 64 KiB
 
 /// Maximum number of simultaneous WebSocket connections.
 const MAX_WS_CONNECTIONS: usize = 1024;
@@ -45,7 +49,10 @@ async fn handle_ws_connection(
     stream: tokio::net::TcpStream,
     addr: std::net::SocketAddr,
 ) -> anyhow::Result<()> {
-    match accept_async(stream).await {
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_WS_MESSAGE_BYTES))
+        .max_frame_size(Some(MAX_WS_MESSAGE_BYTES));
+    match accept_async_with_config(stream, Some(config)).await {
         Ok(ws) => {
             let (mut write, mut read) = ws.split();
             while let Some(result) = read.next().await {
