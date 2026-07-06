@@ -1,5 +1,100 @@
-#[allow(dead_code)]
-pub async fn run(_cert_path: &str, _key_path: &str, _port: u16) -> anyhow::Result<()> {
-    // Stub — WebTransport listener implemented in Plan 02
+use anyhow::Context;
+use wtransport::endpoint::IncomingSession;
+use wtransport::{Endpoint, Identity, ServerConfig};
+
+use crate::echo::{now_ms, EchoMessage};
+
+/// Run the WebTransport listener.
+///
+/// Loads mkcert TLS certs from `cert_path` / `key_path`, binds to UDP `port`, and enters
+/// an accept loop.  Each accepted connection is dispatched to a `tokio::spawn`; errors in
+/// connection tasks are logged but do not kill the accept loop.
+pub async fn run(cert_path: &str, key_path: &str, port: u16) -> anyhow::Result<()> {
+    let identity = Identity::load_pemfiles(cert_path, key_path)
+        .await
+        .with_context(|| format!("Failed to load TLS certs from {cert_path} / {key_path}"))?;
+
+    let config = ServerConfig::builder()
+        .with_bind_default(port)
+        .with_identity(identity)
+        .build();
+
+    let server = Endpoint::server(config)?;
+    tracing::info!("WebTransport listening on :{}", port);
+
+    loop {
+        let incoming = server.accept().await;
+        tokio::spawn(async move {
+            if let Err(e) = handle_wt_connection(incoming).await {
+                tracing::error!("WT connection error: {e:#}");
+            }
+        });
+    }
+}
+
+/// Handle a single WebTransport connection.
+///
+/// Follows the three-step accept pattern required by wtransport:
+/// 1. `IncomingSession` — await to get the HTTP/3 request
+/// 2. `request.accept()` — complete the WebTransport handshake
+/// 3. Enter echo loop on bidirectional streams
+async fn handle_wt_connection(incoming: IncomingSession) -> anyhow::Result<()> {
+    let request = incoming
+        .await
+        .context("WebTransport session request failed")?;
+
+    tracing::info!(
+        authority = %request.authority(),
+        path = %request.path(),
+        "WT session request received"
+    );
+
+    let conn = request.accept().await.context("WT session accept failed")?;
+
+    tracing::info!("WT session accepted");
+
+    loop {
+        let (mut send, mut recv) = conn
+            .accept_bi()
+            .await
+            .context("accept_bi failed — connection likely closed")?;
+
+        // Read the incoming ping message
+        let mut buf = vec![0u8; 4096];
+        let Some(n) = recv
+            .read(&mut buf)
+            .await
+            .context("recv read failed")?
+        else {
+            // Stream closed cleanly — exit the connection loop
+            break;
+        };
+
+        // Deserialize EchoMessage; drop malformed payloads without panicking (T-01-06)
+        let msg: EchoMessage = match serde_json::from_slice(&buf[..n]) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("Malformed echo message ({e}), dropping");
+                continue;
+            }
+        };
+
+        if msg.msg_type != "ping" {
+            tracing::warn!(msg_type = %msg.msg_type, "Unexpected message type, ignoring");
+            continue;
+        }
+
+        let pong = EchoMessage {
+            msg_type: "pong".into(),
+            client_ts: msg.client_ts,
+            server_ts: Some(now_ms()),
+        };
+
+        let reply = serde_json::to_vec(&pong).context("pong serialization failed")?;
+        send.write_all(&reply)
+            .await
+            .context("send write_all failed")?;
+    }
+
     Ok(())
 }

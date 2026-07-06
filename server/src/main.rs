@@ -21,7 +21,8 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(cert_path, key_path, wt_port, ws_port, "Server starting");
 
-    // Listener spawns added in Plans 02 and 03; stubs return Ok(()) immediately.
+    // wt_server: full WebTransport listener (Plan 02).
+    // ws_server: stub — WebSocket fallback listener implemented in Plan 03.
     tokio::try_join!(
         wt_server::run(&cert_path, &key_path, wt_port),
         ws_server::run(ws_port),
