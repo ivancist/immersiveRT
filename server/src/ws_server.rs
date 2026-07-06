@@ -1,6 +1,7 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;
+use tokio_tungstenite::tungstenite::Message;
 
 pub async fn run(port: u16) -> anyhow::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
@@ -40,6 +41,13 @@ async fn handle_ws_connection(
         Ok(ws) => {
             let (mut write, mut read) = ws.split();
             while let Some(Ok(msg)) = read.next().await {
+                // Only echo data frames; control frames (Ping, Pong, Close) are
+                // handled by tungstenite internally — echoing them back would
+                // violate RFC 6455 §5.5.2-5.5.3.
+                match &msg {
+                    Message::Text(_) | Message::Binary(_) => {}
+                    _ => continue,
+                }
                 if write.send(msg).await.is_err() {
                     break;
                 }
