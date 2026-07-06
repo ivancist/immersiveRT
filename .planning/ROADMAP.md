@@ -69,10 +69,21 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 02-01-PLAN.md — Cargo.toml + broker.rs + signaling.rs + turn_creds.rs (core relay modules, Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 02-02-PLAN.md — wt_server + ws_server + main.rs signaling relay activation (Wave 2)
 - [ ] 02-03-PLAN.md — Docker deployment: Dockerfile, turnserver.conf, docker-compose.yml (Wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 02-04-PLAN.md — TURN credential HTTP endpoint via axum on HTTP_PORT (Wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 02-05-PLAN.md — Full workspace gate + manual validation checkpoint (Wave 4)
 
 ### Phase 3: Session and Pairing
