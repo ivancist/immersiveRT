@@ -52,9 +52,9 @@ decisions:
   - "ws_server.rs not modified in this plan — remains Plan 03 stub as intended"
 
 metrics:
-  duration_minutes: 2
+  duration_minutes: 35
   completed_date: "2026-07-06"
-  tasks_completed: 2
+  tasks_completed: 3
   tasks_total: 3
   files_created: 0
   files_modified: 2
@@ -62,7 +62,7 @@ metrics:
 
 # Phase 01 Plan 02: WebTransport Server Implementation Summary
 
-**One-liner:** Full wtransport Endpoint accept loop with three-step handshake, ping/pong echo over bidirectional stream, and mkcert TLS cert loading — `cargo build` clean, `cargo test` 2/2 passing.
+**One-liner:** Full wtransport Endpoint accept loop with three-step QUIC handshake, ping/pong JSON echo over bidirectional stream, and mkcert TLS cert loading — Chrome WebTransport echo round-trip verified sub-10ms on localhost after NSS store CA install.
 
 ## What Was Built
 
@@ -84,6 +84,10 @@ Replaced the `wt_server::run` stub with a complete WebTransport listener:
 | `cargo test -p immersive-rt-server` | PASS — 2/2 tests (echo unit tests) |
 | Cert files exist at certs/localhost+2.pem and certs/localhost+2-key.pem | PASS |
 | PEM files are valid format (BEGIN CERTIFICATE / BEGIN PRIVATE KEY) | PASS |
+| `cargo run` emits "WebTransport listening on :4433" | PASS |
+| Chrome WebTransport echo snippet → pong received | PASS — human approved |
+| `server_ts - client_ts` < 10ms on localhost | PASS — sub-10ms confirmed |
+| Server logs "WT session accepted" on Chrome connect | PASS |
 
 ## Tasks Completed
 
@@ -91,13 +95,21 @@ Replaced the `wt_server::run` stub with a complete WebTransport listener:
 |------|------|--------|-------|
 | 1 | mkcert cert verification (certs pre-existing per user setup) | — | certs/localhost+2.pem, certs/localhost+2-key.pem (verified, not committed) |
 | 2 | Implement wt_server.rs WebTransport listener and echo handler | 6e34ea9 | server/src/wt_server.rs, server/src/main.rs |
-| 3 | Manual Chrome WebTransport connection verification | CHECKPOINT — awaiting human | — |
+| 3 | Manual Chrome WebTransport connection verification | APPROVED | Chrome echo snippet received pong; server_ts - client_ts sub-10ms |
 
 ## Deviations from Plan
 
-None — plan executed exactly as written.
+### Human Setup Discovery (not a code deviation)
 
-Task 1 was handled per the user_setup_status note: certs were pre-existing, so the task was verified (not regenerated). The checkpoint in the user setup specified certs exist at `certs/localhost+2.pem` and `certs/localhost+2-key.pem` — confirmed.
+**mkcert NSS store missing — Chrome QUIC handshake failed until resolved**
+
+- **Found during:** Task 3 human verification
+- **Issue:** Chrome's QUIC stack validates WebTransport TLS certs against its own NSS certificate database, not the OS trust store alone. The `chrome://flags/#webtransport-developer-mode` flag was already enabled, but `ERR_QUIC_HANDSHAKE_FAILED` persisted. Root cause: `libnss3-tools` was not installed on the system, so `mkcert -install` had not registered the local CA in Chrome's NSS store.
+- **Resolution:** User ran `sudo apt install libnss3-tools && mkcert -install` followed by a Chrome restart. Connection succeeded immediately.
+- **Impact on code:** No code changes required.
+- **Documentation note:** Downstream plans should clarify that `libnss3-tools` must be installed before `mkcert -install` on Debian/Ubuntu. The `webtransport-developer-mode` flag alone is not sufficient when the NSS store is absent.
+
+All code tasks executed exactly as written.
 
 ## Known Stubs
 
@@ -116,10 +128,12 @@ None. All security-relevant surfaces introduced in this plan were covered by the
 
 ## Self-Check: PASSED
 
-- [x] server/src/wt_server.rs exists and is non-stub
-- [x] server/src/main.rs modified (comment updated)
-- [x] Commit 6e34ea9 exists (Task 2)
+- [x] server/src/wt_server.rs exists and is non-stub (contains `pub async fn run` and `handle_wt_connection`)
+- [x] server/src/main.rs wires `wt_server::run` (not a stub)
+- [x] Commit 6e34ea9 exists (Task 2 — feat(01-02))
+- [x] Commit 8ca8613 exists (Task 3 — docs(01-02) checkpoint)
 - [x] `cargo build -p immersive-rt-server` exits 0
 - [x] `cargo test -p immersive-rt-server` exits 0, 2/2 tests passing
-- [x] certs/localhost+2.pem exists
-- [x] certs/localhost+2-key.pem exists
+- [x] certs/localhost+2.pem exists (gitignored, not committed)
+- [x] certs/localhost+2-key.pem exists (gitignored, not committed)
+- [x] Chrome echo snippet received pong — human approved, sub-10ms latency confirmed

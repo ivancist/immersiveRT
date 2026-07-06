@@ -4,9 +4,9 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 01
 current_phase_name: server-and-transport-foundation
-status: executing
+status: verifying
 stopped_at: Roadmap written, STATE.md initialized, REQUIREMENTS.md traceability updated
-last_updated: "2026-07-06T15:17:52.224Z"
+last_updated: "2026-07-06T15:59:40.185Z"
 last_activity: 2026-07-06
 last_activity_desc: Phase 01 execution started
 progress:
@@ -30,33 +30,36 @@ See: .planning/PROJECT.md (updated 2026-07-06)
 
 Phase: 01 (server-and-transport-foundation) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
-Last activity: 2026-07-06 — Phase 01 execution started
+Status: Phase complete — ready for verification
+Last activity: 2026-07-06 — Phase 01 Plan 02 complete — WebTransport listener verified end-to-end
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
-- Average duration: —
-- Total execution time: 0 hours
+- Total plans completed: 2
+- Average duration: 19 min
+- Total execution time: 0.6 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| Phase 01 | 2/3 | 37 min | 19 min |
 
 **Recent Trend:**
 
-- Last 5 plans: —
+- Last 5 plans: P01 (2 min), P02 (35 min)
 - Trend: —
 
 *Updated after each plan completion*
-| Phase 01 P01 | 2 | 3 tasks | 8 files |
-| Phase 01 P02 | 2 | 2 tasks | 2 files |
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 2 min | 3 tasks | 8 files |
+| Phase 01 P02 | 35 min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -75,6 +78,7 @@ Recent decisions affecting current work:
 - [Phase ?]: certs/ gitignored before any cert files exist — T-01-01 private key disclosure mitigation
 - [Phase ?]: Cargo.lock committed to repo to pin exact crate versions — T-01-02 supply chain tampering mitigation
 - [Phase ?]: #[allow(dead_code)] on echo.rs public items until Plans 02/03 activate them — avoids false warnings on stub modules
+- Phase 1 Plan 02: NSS store install (libnss3-tools + mkcert -install) required for Chrome QUIC cert trust on Debian/Ubuntu — webtransport-developer-mode flag alone insufficient without CA in NSS store
 
 ### Pending Todos
 
@@ -82,7 +86,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 1 critical: WebTransport TLS cert requirements are strict — use `chrome://flags/#webtransport-developer-mode` in dev, Let's Encrypt in prod
+- Phase 1 Plan 02 RESOLVED: WebTransport TLS cert requirements — Chrome echo round-trip verified; NSS store install required on Debian/Ubuntu
 - Phase 2 critical: TURN credential endpoint must generate at connection-start (not page load) to prevent staleness
 - Phase 5: Madgwick beta empirical tuning (0.1 default, ramp 0.2–0.3 at cold start) requires real-device validation
 - Phase 5: ZUPT adaptive threshold values require empirical tuning — plan device testing session
@@ -95,6 +99,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-06T15:17:48.459Z
+Last session: 2026-07-06T15:59:40.181Z
 Stopped at: Roadmap written, STATE.md initialized, REQUIREMENTS.md traceability updated
 Resume file: None
