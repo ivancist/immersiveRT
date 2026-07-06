@@ -1,7 +1,12 @@
 use futures_util::{SinkExt, StreamExt};
+use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
+
+/// Maximum number of simultaneous WebSocket connections.
+const MAX_WS_CONNECTIONS: usize = 1024;
 
 pub async fn run(port: u16) -> anyhow::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
@@ -10,10 +15,13 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
 }
 
 pub async fn run_with_listener(listener: TcpListener) -> anyhow::Result<()> {
+    let sem = Arc::new(Semaphore::new(MAX_WS_CONNECTIONS));
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
+                let permit = sem.clone().acquire_owned().await.unwrap();
                 tokio::spawn(async move {
+                    let _permit = permit; // Released when the connection closes
                     if let Err(e) = handle_ws_connection(stream, addr).await {
                         tracing::warn!("WS connection error from {addr}: {e}");
                     }
