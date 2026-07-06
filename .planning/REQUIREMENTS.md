@@ -106,57 +106,57 @@
 
 ## Traceability
 
-*Populated during roadmap creation.*
+*Populated during roadmap creation — 2026-07-06*
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | — | Pending |
-| INFRA-02 | — | Pending |
-| INFRA-03 | — | Pending |
-| INFRA-04 | — | Pending |
-| INFRA-05 | — | Pending |
-| INFRA-06 | — | Pending |
-| INFRA-07 | — | Pending |
-| SESS-01 | — | Pending |
-| SESS-02 | — | Pending |
-| SESS-03 | — | Pending |
-| SESS-04 | — | Pending |
-| SESS-05 | — | Pending |
-| SESS-06 | — | Pending |
-| PHONE-01 | — | Pending |
-| PHONE-02 | — | Pending |
-| PHONE-03 | — | Pending |
-| PHONE-04 | — | Pending |
-| PHONE-05 | — | Pending |
-| PHONE-06 | — | Pending |
-| PHONE-07 | — | Pending |
-| SENS-01 | — | Pending |
-| SENS-02 | — | Pending |
-| SENS-03 | — | Pending |
-| SENS-04 | — | Pending |
-| SENS-05 | — | Pending |
-| SENS-06 | — | Pending |
-| DESK-01 | — | Pending |
-| DESK-02 | — | Pending |
-| DESK-03 | — | Pending |
-| DESK-04 | — | Pending |
-| DESK-05 | — | Pending |
-| SDK-01 | — | Pending |
-| SDK-02 | — | Pending |
-| SDK-03 | — | Pending |
-| SDK-04 | — | Pending |
-| SDK-05 | — | Pending |
-| SDK-06 | — | Pending |
-| DEMO-01 | — | Pending |
-| DEMO-02 | — | Pending |
-| DEMO-03 | — | Pending |
-| DEMO-04 | — | Pending |
+| INFRA-01 | Phase 1 | Pending |
+| INFRA-05 | Phase 1 | Pending |
+| INFRA-02 | Phase 2 | Pending |
+| INFRA-03 | Phase 2 | Pending |
+| INFRA-04 | Phase 2 | Pending |
+| INFRA-06 | Phase 2 | Pending |
+| INFRA-07 | Phase 2 | Pending |
+| SESS-01 | Phase 3 | Pending |
+| SESS-02 | Phase 3 | Pending |
+| SESS-03 | Phase 3 | Pending |
+| SESS-04 | Phase 3 | Pending |
+| SESS-05 | Phase 3 | Pending |
+| SESS-06 | Phase 3 | Pending |
+| PHONE-01 | Phase 4 | Pending |
+| PHONE-02 | Phase 4 | Pending |
+| PHONE-03 | Phase 4 | Pending |
+| PHONE-06 | Phase 4 | Pending |
+| PHONE-07 | Phase 4 | Pending |
+| SENS-01 | Phase 5 | Pending |
+| SENS-02 | Phase 5 | Pending |
+| SENS-03 | Phase 5 | Pending |
+| SENS-04 | Phase 5 | Pending |
+| SENS-05 | Phase 5 | Pending |
+| SENS-06 | Phase 5 | Pending |
+| PHONE-04 | Phase 5 | Pending |
+| PHONE-05 | Phase 5 | Pending |
+| DESK-01 | Phase 6 | Pending |
+| DESK-02 | Phase 6 | Pending |
+| DESK-03 | Phase 6 | Pending |
+| DESK-04 | Phase 6 | Pending |
+| DESK-05 | Phase 6 | Pending |
+| SDK-01 | Phase 7 | Pending |
+| SDK-02 | Phase 7 | Pending |
+| SDK-03 | Phase 7 | Pending |
+| SDK-04 | Phase 7 | Pending |
+| SDK-05 | Phase 7 | Pending |
+| SDK-06 | Phase 7 | Pending |
+| DEMO-01 | Phase 8 | Pending |
+| DEMO-02 | Phase 8 | Pending |
+| DEMO-03 | Phase 8 | Pending |
+| DEMO-04 | Phase 8 | Pending |
 
 **Coverage:**
 - v1 requirements: 41 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 42 ⚠️
+- Mapped to phases: 41
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-06*
-*Last updated: 2026-07-06 after initial definition*
+*Last updated: 2026-07-06 — traceability populated after roadmap creation*
