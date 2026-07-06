@@ -1,19 +1,22 @@
 use futures_util::{SinkExt, StreamExt};
-use std::time::Duration;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[tokio::test]
 async fn test_ws_echo() {
-    // Spawn the WebSocket listener on a dedicated test port to avoid conflicts with
-    // a running server instance (port 8080).
-    tokio::spawn(immersive_rt_server::ws_server::run(18080));
-
-    // Give the listener a moment to bind before connecting.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let (mut ws, _response) = connect_async("ws://127.0.0.1:18080")
+    // Bind before spawning so a port conflict is an immediate, clear test failure
+    // rather than a misleading "connect failed" error after a 50ms sleep.
+    // Port 0 asks the OS for an available ephemeral port — no hardcoded port needed.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
-        .expect("WebSocket connect failed — is port 18080 available?");
+        .expect("failed to bind test listener");
+    let addr = listener.local_addr().expect("no local addr");
+
+    tokio::spawn(immersive_rt_server::ws_server::run_with_listener(listener));
+
+    let url = format!("ws://{}", addr);
+    let (mut ws, _response) = connect_async(&url)
+        .await
+        .expect("WebSocket connect failed");
 
     let payload = "hello-echo-test";
     ws.send(Message::Text(payload.into()))
