@@ -6,11 +6,15 @@ use serde::{Deserialize, Serialize};
 /// "from":"<client-id>","to":"<client-id>","payload":{...}}`
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SignalingEnvelope {
-    // RED stub: missing serde rename → serialises as "msg_type" not "type"
+    /// Message type. Serialised as `"type"` on the wire per D-04.
+    #[serde(rename = "type")]
     pub msg_type: String,
+    /// Sender's client ID.
     pub from: String,
+    /// Recipient's client ID. Empty string for `"register"` messages.
     #[serde(default)]
     pub to: String,
+    /// Opaque payload (SDP offer/answer body or ICE candidate object).
     #[serde(default)]
     pub payload: serde_json::Value,
 }
@@ -19,9 +23,7 @@ pub struct SignalingEnvelope {
 ///
 /// Returns `None` on malformed input — never panics (T-01-06 precedent).
 pub fn parse_envelope(bytes: &[u8]) -> Option<SignalingEnvelope> {
-    // RED stub: always None (implementation deferred to GREEN)
-    let _ = bytes;
-    None
+    serde_json::from_slice(bytes).ok()
 }
 
 #[cfg(test)]

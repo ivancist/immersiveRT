@@ -9,12 +9,16 @@ pub type ClientId = String;
 /// WebSocket handlers share a single `Arc<SignalingBroker>` and call `route` to
 /// forward signaling envelopes to any registered client regardless of which
 /// transport they arrived on.
+///
+/// The inner `Arc<DashMap>` means `clone()` is cheap — both WT and WS handlers
+/// receive the same logical broker handle and share the same map.
 #[derive(Clone)]
 pub struct SignalingBroker {
     clients: std::sync::Arc<DashMap<ClientId, mpsc::UnboundedSender<Vec<u8>>>>,
 }
 
 impl SignalingBroker {
+    /// Create a new, empty broker.
     pub fn new() -> Self {
         Self {
             clients: std::sync::Arc::new(DashMap::new()),
@@ -22,6 +26,10 @@ impl SignalingBroker {
     }
 
     /// Register a client by ID and return the receiver this handler must drain.
+    ///
+    /// The caller owns the returned `UnboundedReceiver` and must drain it in its
+    /// connection task. The corresponding `UnboundedSender` is stored in the map.
+    /// Calling `register` for an already-registered ID replaces the previous sender.
     pub fn register(&self, id: ClientId) -> mpsc::UnboundedReceiver<Vec<u8>> {
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
         self.clients.insert(id, tx);
@@ -38,13 +46,14 @@ impl SignalingBroker {
     /// Returns `true` if the client is connected and the send succeeded.
     /// Returns `false` if the client is unknown — the **caller** must log a
     /// warning per D-05; the broker itself does not log here.
+    ///
+    /// Safety note: `mpsc::UnboundedSender::send` is synchronous (not `.await`),
+    /// so the DashMap shard guard is never held across an `.await` point — safe
+    /// by construction for unbounded channels. If this changes to a bounded
+    /// channel, the sender must be cloned out of the guard before any `.await`.
     pub fn route(&self, to: &str, payload: Vec<u8>) -> bool {
-        // RED stub: drops payload instead of forwarding — route always returns false
         match self.clients.get(to) {
-            Some(_sender) => {
-                drop(payload);
-                false
-            }
+            Some(sender) => sender.send(payload).is_ok(),
             None => false,
         }
     }
