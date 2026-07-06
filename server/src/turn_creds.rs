@@ -28,8 +28,9 @@ pub fn generate_turn_credentials(
     ttl_seconds: u64,
 ) -> anyhow::Result<TurnCredentials> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    // RED stub: use `now` without adding ttl_seconds — Pitfall 1 bug (expiry ≠ issue time)
-    let expiry = now; // BUG: should be now + ttl_seconds
+    // EXPIRY timestamp: coturn checks `now < expiry` when validating credentials.
+    // Always add ttl_seconds — never use `now` alone (Pitfall 1 in RESEARCH.md).
+    let expiry = now + ttl_seconds;
     let username = format!("{expiry}:{userid}");
 
     let mut mac = HmacSha1::new_from_slice(shared_secret.as_bytes())
