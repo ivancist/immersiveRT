@@ -33,7 +33,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. A WebSocket client can connect to the same server on the same port when Chrome's WebTransport is disabled or QUIC is blocked — signaling messages round-trip successfully
   3. A latency probe message sent over WebTransport returns a server-echoed timestamp within 10ms on LAN
   4. The server binary builds and passes `cargo test` with no warnings
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Cargo workspace scaffold, echo module, clean build baseline
+- [ ] 01-02-PLAN.md — WebTransport listener (wtransport + mkcert TLS) + latency echo probe
+- [ ] 01-03-PLAN.md — WebSocket fallback listener + integration test + full workspace gate
 
 ### Phase 2: Signaling, TURN, and Deployment
 **Goal**: The server brokers a full WebRTC offer/answer/ICE exchange between a phone and desktop; coturn provides STUN/TURN reachability validated with `turnutils_uclient`; the entire stack ships in a single `docker compose up`
@@ -136,7 +141,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Server and Transport Foundation | 0/TBD | Not started | - |
+| 1. Server and Transport Foundation | 0/3 | Not started | - |
 | 2. Signaling, TURN, and Deployment | 0/TBD | Not started | - |
 | 3. Session and Pairing | 0/TBD | Not started | - |
 | 4. Phone Bootstrap and WebRTC Channels | 0/TBD | Not started | - |
