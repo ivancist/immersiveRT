@@ -8,9 +8,9 @@
 ### Infrastructure
 
 - [x] **INFRA-01**: Server runs as a single Rust binary (wtransport + tokio) handling WebTransport connections from both phones and desktops
-- [ ] **INFRA-02**: Server brokers WebRTC signaling (offer/answer/ICE) between phone and its paired desktop
-- [ ] **INFRA-03**: Server brokers WebRTC signaling between desktop and all other desktops in the same room
-- [ ] **INFRA-04**: Server provides a TURN credential endpoint that generates ephemeral credentials at connection-start (not page load)
+- [x] **INFRA-02**: Server brokers WebRTC signaling (offer/answer/ICE) between phone and its paired desktop
+- [x] **INFRA-03**: Server brokers WebRTC signaling between desktop and all other desktops in the same room
+- [x] **INFRA-04**: Server provides a TURN credential endpoint that generates ephemeral credentials at connection-start (not page load)
 - [x] **INFRA-05**: Server provides a WebSocket signaling fallback path for networks where QUIC/UDP is blocked
 - [ ] **INFRA-06**: coturn STUN/TURN server runs in Docker with `network_mode: host` and `external-ip` configured
 - [ ] **INFRA-07**: Full stack deployable with a single `docker compose up` (Rust server + coturn + static file server)
@@ -112,9 +112,9 @@
 |-------------|-------|--------|
 | INFRA-01 | Phase 1 | Complete |
 | INFRA-05 | Phase 1 | Complete |
-| INFRA-02 | Phase 2 | Pending |
-| INFRA-03 | Phase 2 | Pending |
-| INFRA-04 | Phase 2 | Pending |
+| INFRA-02 | Phase 2 | Complete |
+| INFRA-03 | Phase 2 | Complete |
+| INFRA-04 | Phase 2 | Complete |
 | INFRA-06 | Phase 2 | Pending |
 | INFRA-07 | Phase 2 | Pending |
 | SESS-01 | Phase 3 | Pending |

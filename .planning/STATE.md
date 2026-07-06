@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 2
-current_phase_name: Signaling, TURN, and Deployment
+current_phase: 02
+current_phase_name: signaling-turn-and-deployment
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-07-06T20:24:04.349Z"
+last_updated: "2026-07-06T20:41:13.764Z"
 last_activity: 2026-07-06
-last_activity_desc: Phase 01 complete, transitioned to Phase 2
+last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 8
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 8
+  completed_plans: 4
   percent: 13
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-06)
 
 **Core value:** Phone motion feels physically immediate on screen — sub-20ms sensor delivery from phone to desktop, lowest possible latency.
-**Current focus:** Phase 01 — server-and-transport-foundation
+**Current focus:** Phase 02 — signaling-turn-and-deployment
 
 ## Current Position
 
-Phase: 2 — Signaling, TURN, and Deployment
-Plan: Not started
+Phase: 02 (signaling-turn-and-deployment) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-07-06 — Phase 01 complete, transitioned to Phase 2
+Last activity: 2026-07-06 — Phase 02 execution started
 
 Progress: [███████░░░] 67%
 
@@ -62,6 +62,7 @@ Progress: [███████░░░] 67%
 | Phase 01 P01 | 2 min | 3 tasks | 8 files |
 | Phase 01 P02 | 35 min | 3 tasks | 2 files |
 | Phase 01 P03 | 1 | 3 tasks | 3 files |
+| Phase 02 P01 | 9 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,9 @@ Recent decisions affecting current work:
 - [Phase ?]: lib.rs added to expose ws_server to integration tests — integration tests link against lib crate not binary crate
 - [Phase ?]: Test port 18080 for ws_echo integration test — avoids conflicts with running server on port 8080
 - [Phase ?]: Phase 1: Plain ws:// only for WebSocket fallback — WSS with TLS deferred to Phase 2 Docker deployment per RESEARCH.md Open Q1
+- Phase 2 Plan 01: SignalingBroker::route returns bool; caller (not broker) logs warning for unknown targets per D-05
+- Phase 2 Plan 01: hmac::KeyInit trait must be imported alongside Mac to use new_from_slice in hmac 0.13
+- Phase 2 Plan 01: TURN credential expiry = now + ttl_seconds (never now alone) — coturn treats username timestamp as expiry not issue time (Pitfall 1)
 
 ### Pending Todos
 
@@ -104,6 +108,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-06T17:22:17.310Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-signaling-turn-and-deployment/02-CONTEXT.md
+Last session: 2026-07-06T20:41:10.587Z
+Stopped at: Plan 02-01 complete — broker, signaling, turn_creds modules implemented
+Resume file: .planning/phases/02-signaling-turn-and-deployment/02-02-PLAN.md
