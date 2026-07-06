@@ -5,16 +5,31 @@ use tokio_tungstenite::accept_async;
 pub async fn run(port: u16) -> anyhow::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     tracing::info!("WebSocket fallback listening on :{}", port);
+    run_with_listener(listener).await
+}
 
-    while let Ok((stream, addr)) = listener.accept().await {
-        tokio::spawn(async move {
-            if let Err(e) = handle_ws_connection(stream, addr).await {
-                tracing::warn!("WS connection error from {addr}: {e}");
+pub async fn run_with_listener(listener: TcpListener) -> anyhow::Result<()> {
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                tokio::spawn(async move {
+                    if let Err(e) = handle_ws_connection(stream, addr).await {
+                        tracing::warn!("WS connection error from {addr}: {e}");
+                    }
+                });
             }
-        });
+            Err(e) => {
+                tracing::error!("WS accept error: {e}");
+                use std::io::ErrorKind;
+                match e.kind() {
+                    ErrorKind::ConnectionAborted
+                    | ErrorKind::ConnectionReset
+                    | ErrorKind::Interrupted => continue,
+                    _ => return Err(e.into()),
+                }
+            }
+        }
     }
-
-    Ok(())
 }
 
 async fn handle_ws_connection(
