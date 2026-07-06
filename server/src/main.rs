@@ -13,11 +13,11 @@ async fn main() -> anyhow::Result<()> {
     let wt_port: u16 = std::env::var("WT_PORT")
         .unwrap_or_else(|_| "4433".into())
         .parse()
-        .unwrap_or(4433);
+        .map_err(|e| anyhow::anyhow!("WT_PORT must be a valid u16 port number: {e}"))?;
     let ws_port: u16 = std::env::var("WS_PORT")
         .unwrap_or_else(|_| "8080".into())
         .parse()
-        .unwrap_or(8080);
+        .map_err(|e| anyhow::anyhow!("WS_PORT must be a valid u16 port number: {e}"))?;
 
     tracing::info!(cert_path, key_path, wt_port, ws_port, "Server starting");
 
