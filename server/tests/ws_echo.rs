@@ -1,27 +1,44 @@
 use futures_util::{SinkExt, StreamExt};
+use std::sync::Arc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+/// Verifies that a client can connect, register, and receive a message routed back
+/// to itself (self-routing round-trip).  This replaced the legacy echo test once
+/// ws_server was converted from echo to signaling relay in Plan 02-02.
 #[tokio::test]
 async fn test_ws_echo() {
-    // Bind before spawning so a port conflict is an immediate, clear test failure
-    // rather than a misleading "connect failed" error after a 50ms sleep.
-    // Port 0 asks the OS for an available ephemeral port — no hardcoded port needed.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("failed to bind test listener");
     let addr = listener.local_addr().expect("no local addr");
 
-    tokio::spawn(immersive_rt_server::ws_server::run_with_listener(listener));
+    let broker = Arc::new(immersive_rt_server::broker::SignalingBroker::new());
+    tokio::spawn(immersive_rt_server::ws_server::run_with_listener(
+        listener,
+        broker,
+        None,
+    ));
 
     let url = format!("ws://{}", addr);
     let (mut ws, _response) = connect_async(&url)
         .await
         .expect("WebSocket connect failed");
 
-    let payload = "hello-echo-test";
-    ws.send(Message::Text(payload.into()))
+    // Register with the broker so we can receive routed messages.
+    ws.send(Message::Text(
+        r#"{"type":"register","from":"echo-client","to":"","payload":null}"#.into(),
+    ))
+    .await
+    .expect("register send failed");
+
+    // Yield to let the server process the registration before sending.
+    tokio::task::yield_now().await;
+
+    // Send an offer to ourselves — the broker routes it back to the same connection.
+    let offer_msg = r#"{"type":"offer","from":"echo-client","to":"echo-client","payload":{}}"#;
+    ws.send(Message::Text(offer_msg.into()))
         .await
-        .expect("send failed");
+        .expect("offer send failed");
 
     let reply = ws
         .next()
@@ -31,7 +48,18 @@ async fn test_ws_echo() {
 
     match reply {
         Message::Text(text) => {
-            assert_eq!(text, payload, "echo mismatch: got {text:?}, expected {payload:?}");
+            let env = immersive_rt_server::signaling::parse_envelope(text.as_bytes())
+                .expect("reply should be a valid SignalingEnvelope");
+            assert_eq!(
+                env.msg_type, "offer",
+                "relay self-routing: expected msg_type 'offer', got {:?}",
+                env.msg_type
+            );
+            assert_eq!(
+                env.from, "echo-client",
+                "relay self-routing: expected from 'echo-client', got {:?}",
+                env.from
+            );
         }
         other => panic!("unexpected message type: {other:?}"),
     }
