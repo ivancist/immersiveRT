@@ -413,22 +413,16 @@ chrome://flags/#webtransport-developer-mode
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should the WebSocket fallback on port 8080 require TLS (WSS) or plain WS?**
-   - What we know: The success criterion says "signaling messages round-trip successfully" — no TLS requirement stated for WS fallback
-   - What's unclear: If clients connecting over WS also need a secure context (e.g., from HTTPS page), plain WS will be blocked by mixed-content browser policy
-   - Recommendation: Implement plain WS (ws://) initially to keep Phase 1 simple; plan to add WSS in Phase 2 when Docker TLS/prod setup is addressed
+   - **RESOLVED: Plain ws:// for Phase 1 (LAN dev only).** WSS deferred to Phase 2 when Docker TLS/prod setup is addressed. Plan 03 Task 1 explicitly implements plain WS.
 
 2. **Should the Cargo workspace include client crates now, or server-only?**
-   - What we know: Phase 1 is server-only; client (phone + desktop) comes in Phase 4+
-   - What's unclear: Whether to reserve workspace slots for future client crates now
-   - Recommendation: Start workspace with `members = ["server"]`; add client members as needed in later phases
+   - **RESOLVED: Server-only workspace (`members = ["server"]`).** Client crates added in Phases 4+ when phone/desktop client implementation begins.
 
 3. **Latency probe: WebTransport datagram vs. bidirectional stream?**
-   - What we know: Both datagrams and bi-streams are available; datagrams are unreliable/unordered
-   - What's unclear: For a latency test, reliability matters (don't want to measure a lost packet)
-   - Recommendation: Use a bidirectional stream for the latency probe to ensure the echo arrives; save datagrams for the actual sensor data in Phase 5
+   - **RESOLVED: Bidirectional stream.** Plan 02 Task 2 uses `conn.accept_bi()` for the echo probe to guarantee delivery. Unreliable datagrams reserved for actual sensor data in Phase 5.
 
 ---
 
