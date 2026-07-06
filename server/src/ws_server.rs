@@ -40,7 +40,14 @@ async fn handle_ws_connection(
     match accept_async(stream).await {
         Ok(ws) => {
             let (mut write, mut read) = ws.split();
-            while let Some(Ok(msg)) = read.next().await {
+            while let Some(result) = read.next().await {
+                let msg = match result {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::warn!("WS read error from {addr}: {e}");
+                        break;
+                    }
+                };
                 // Only echo data frames; control frames (Ping, Pong, Close) are
                 // handled by tungstenite internally — echoing them back would
                 // violate RFC 6455 §5.5.2-5.5.3.
