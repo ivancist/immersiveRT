@@ -94,6 +94,9 @@ async fn handle_wt_connection(incoming: IncomingSession) -> anyhow::Result<()> {
 
         if msg.msg_type != "ping" {
             tracing::warn!(msg_type = %msg.msg_type, "Unexpected message type, ignoring");
+            // Finish the send stream cleanly so the peer receives EOF rather than
+            // RESET_STREAM (RFC 9000 §3.3 — dropping without finish() sends RESET_STREAM).
+            let _ = send.finish().await;
             continue;
         }
 
