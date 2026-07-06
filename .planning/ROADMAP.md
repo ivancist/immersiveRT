@@ -13,7 +13,7 @@ ImmersiveRT is built from the network stack outward. Phase 1 and 2 establish the
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Server and Transport Foundation** - Rust WebTransport server binary, mkcert TLS for dev, WebSocket signaling fallback, verified end-to-end QUIC connection
+- [x] **Phase 1: Server and Transport Foundation** - Rust WebTransport server binary, mkcert TLS for dev, WebSocket signaling fallback, verified end-to-end QUIC connection (completed 2026-07-06)
 - [ ] **Phase 2: Signaling, TURN, and Deployment** - WebRTC ICE signaling broker, coturn with host networking, ephemeral TURN credentials, full Docker Compose stack
 - [ ] **Phase 3: Session and Pairing** - Room join, QR code + short code pairing, slot assignment, reconnect hold, 2-8 player support, room lifecycle events
 - [ ] **Phase 4: Phone Bootstrap and WebRTC Channels** - Phone web app delivery, iOS DeviceMotion permission gate, Wake Lock, heartbeat, unreliable data channels to all desktops
@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A latency probe message sent over WebTransport returns a server-echoed timestamp within 10ms on LAN
   4. The server binary builds and passes `cargo test` with no warnings
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -50,7 +50,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03-PLAN.md — WebSocket fallback listener + integration test + full workspace gate
+- [x] 01-03-PLAN.md — WebSocket fallback listener + integration test + full workspace gate
 
 ### Phase 2: Signaling, TURN, and Deployment
 
@@ -174,7 +174,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Server and Transport Foundation | 2/3 | In Progress|  |
+| 1. Server and Transport Foundation | 3/3 | Complete   | 2026-07-06 |
 | 2. Signaling, TURN, and Deployment | 0/TBD | Not started | - |
 | 3. Session and Pairing | 0/TBD | Not started | - |
 | 4. Phone Bootstrap and WebRTC Channels | 0/TBD | Not started | - |

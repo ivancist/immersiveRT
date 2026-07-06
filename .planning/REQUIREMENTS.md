@@ -7,11 +7,11 @@
 
 ### Infrastructure
 
-- [ ] **INFRA-01**: Server runs as a single Rust binary (wtransport + tokio) handling WebTransport connections from both phones and desktops
+- [x] **INFRA-01**: Server runs as a single Rust binary (wtransport + tokio) handling WebTransport connections from both phones and desktops
 - [ ] **INFRA-02**: Server brokers WebRTC signaling (offer/answer/ICE) between phone and its paired desktop
 - [ ] **INFRA-03**: Server brokers WebRTC signaling between desktop and all other desktops in the same room
 - [ ] **INFRA-04**: Server provides a TURN credential endpoint that generates ephemeral credentials at connection-start (not page load)
-- [ ] **INFRA-05**: Server provides a WebSocket signaling fallback path for networks where QUIC/UDP is blocked
+- [x] **INFRA-05**: Server provides a WebSocket signaling fallback path for networks where QUIC/UDP is blocked
 - [ ] **INFRA-06**: coturn STUN/TURN server runs in Docker with `network_mode: host` and `external-ip` configured
 - [ ] **INFRA-07**: Full stack deployable with a single `docker compose up` (Rust server + coturn + static file server)
 
@@ -110,8 +110,8 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 1 | Pending |
-| INFRA-05 | Phase 1 | Pending |
+| INFRA-01 | Phase 1 | Complete |
+| INFRA-05 | Phase 1 | Complete |
 | INFRA-02 | Phase 2 | Pending |
 | INFRA-03 | Phase 2 | Pending |
 | INFRA-04 | Phase 2 | Pending |
@@ -153,6 +153,7 @@
 | DEMO-04 | Phase 8 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 41 total
 - Mapped to phases: 41
 - Unmapped: 0

@@ -6,15 +6,15 @@ current_phase: 01
 current_phase_name: server-and-transport-foundation
 status: verifying
 stopped_at: Roadmap written, STATE.md initialized, REQUIREMENTS.md traceability updated
-last_updated: "2026-07-06T15:59:40.185Z"
+last_updated: "2026-07-06T16:05:32.251Z"
 last_activity: 2026-07-06
-last_activity_desc: Phase 01 execution started
+last_activity_desc: Phase 01 Plan 02 complete — WebTransport listener verified end-to-end
 progress:
   total_phases: 8
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 0
+  completed_plans: 3
+  percent: 13
 ---
 
 # Project State
@@ -60,6 +60,7 @@ Progress: [███████░░░] 67%
 |------|----------|-------|-------|
 | Phase 01 P01 | 2 min | 3 tasks | 8 files |
 | Phase 01 P02 | 35 min | 3 tasks | 2 files |
+| Phase 01 P03 | 1 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,9 @@ Recent decisions affecting current work:
 - [Phase ?]: Cargo.lock committed to repo to pin exact crate versions — T-01-02 supply chain tampering mitigation
 - [Phase ?]: #[allow(dead_code)] on echo.rs public items until Plans 02/03 activate them — avoids false warnings on stub modules
 - Phase 1 Plan 02: NSS store install (libnss3-tools + mkcert -install) required for Chrome QUIC cert trust on Debian/Ubuntu — webtransport-developer-mode flag alone insufficient without CA in NSS store
+- [Phase ?]: lib.rs added to expose ws_server to integration tests — integration tests link against lib crate not binary crate
+- [Phase ?]: Test port 18080 for ws_echo integration test — avoids conflicts with running server on port 8080
+- [Phase ?]: Phase 1: Plain ws:// only for WebSocket fallback — WSS with TLS deferred to Phase 2 Docker deployment per RESEARCH.md Open Q1
 
 ### Pending Todos
 
@@ -99,6 +103,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-06T15:59:40.181Z
+Last session: 2026-07-06T16:05:32.247Z
 Stopped at: Roadmap written, STATE.md initialized, REQUIREMENTS.md traceability updated
 Resume file: None
