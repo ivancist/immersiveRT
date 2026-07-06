@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 1
-current_phase_name: Server and Transport Foundation
+current_phase: 01
+current_phase_name: server-and-transport-foundation
 status: executing
 stopped_at: Roadmap written, STATE.md initialized, REQUIREMENTS.md traceability updated
-last_updated: "2026-07-06T12:36:51.529Z"
+last_updated: "2026-07-06T14:47:59.446Z"
 last_activity: 2026-07-06
-last_activity_desc: Roadmap created, 41 requirements mapped across 8 phases
+last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 8
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 3
+  completed_plans: 1
   percent: 0
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-06)
 
 **Core value:** Phone motion feels physically immediate on screen — sub-20ms sensor delivery from phone to desktop, lowest possible latency.
-**Current focus:** Phase 1 — Server and Transport Foundation
+**Current focus:** Phase 01 — server-and-transport-foundation
 
 ## Current Position
 
-Phase: 1 of 8 (Server and Transport Foundation)
-Plan: 0 of TBD in current phase
+Phase: 01 (server-and-transport-foundation) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-07-06 — Roadmap created, 41 requirements mapped across 8 phases
+Last activity: 2026-07-06 — Phase 01 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 01 P01 | 2 | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,10 @@ Recent decisions affecting current work:
 - Phase 4: `{ ordered: false, maxRetransmits: 0 }` enforced from first data channel use — browser default is ordered/reliable
 - Phase 4: iOS DeviceMotion permission must be in synchronous user gesture handler — gated behind button before any sensor code
 - Phase 5: MessagePack (msgpackr) for binary encoding — 3x faster than JSON, ~40 bytes per packet target
+- [Phase ?]: resolver=2 in workspace Cargo.toml for 2021 edition feature unification
+- [Phase ?]: certs/ gitignored before any cert files exist — T-01-01 private key disclosure mitigation
+- [Phase ?]: Cargo.lock committed to repo to pin exact crate versions — T-01-02 supply chain tampering mitigation
+- [Phase ?]: #[allow(dead_code)] on echo.rs public items until Plans 02/03 activate them — avoids false warnings on stub modules
 
 ### Pending Todos
 
@@ -89,6 +94,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-06
+Last session: 2026-07-06T14:47:59.441Z
 Stopped at: Roadmap written, STATE.md initialized, REQUIREMENTS.md traceability updated
 Resume file: None

@@ -37,12 +37,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A latency probe message sent over WebTransport returns a server-echoed timestamp within 10ms on LAN
   4. The server binary builds and passes `cargo test` with no warnings
 
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Cargo workspace scaffold, echo module, clean build baseline
+- [x] 01-01-PLAN.md — Cargo workspace scaffold, echo module, clean build baseline
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -174,7 +174,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Server and Transport Foundation | 0/3 | Not started | - |
+| 1. Server and Transport Foundation | 1/3 | In Progress|  |
 | 2. Signaling, TURN, and Deployment | 0/TBD | Not started | - |
 | 3. Session and Pairing | 0/TBD | Not started | - |
 | 4. Phone Bootstrap and WebRTC Channels | 0/TBD | Not started | - |
