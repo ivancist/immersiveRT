@@ -59,19 +59,32 @@ async fn handle_wt_connection(incoming: IncomingSession) -> anyhow::Result<()> {
             .await
             .context("accept_bi failed — connection likely closed")?;
 
-        // Read the incoming ping message
-        let mut buf = vec![0u8; 4096];
-        let Some(n) = recv
-            .read(&mut buf)
-            .await
-            .context("recv read failed")?
-        else {
-            // Stream closed cleanly — exit the connection loop
+        // Read the full stream payload until FIN — QUIC is a byte stream, not a
+        // message stream.  A single recv.read() can return any number of bytes from
+        // 1 to buf.len(), so we must loop until we get None (FIN) to avoid partial
+        // reads that silently desync the connection (CR-003).
+        let mut buf: Vec<u8> = Vec::new();
+        loop {
+            let mut chunk = vec![0u8; 4096];
+            match recv.read(&mut chunk).await.context("recv read failed")? {
+                Some(n) => buf.extend_from_slice(&chunk[..n]),
+                None => break, // FIN — stream complete
+            }
+            // Guard against unbounded memory growth from a misbehaving peer
+            if buf.len() > 65_536 {
+                tracing::warn!("Oversized WT message ({} bytes), dropping stream", buf.len());
+                buf.clear();
+                break;
+            }
+        }
+
+        if buf.is_empty() {
+            // Stream closed cleanly with no data — exit the connection loop
             break;
-        };
+        }
 
         // Deserialize EchoMessage; drop malformed payloads without panicking (T-01-06)
-        let msg: EchoMessage = match serde_json::from_slice(&buf[..n]) {
+        let msg: EchoMessage = match serde_json::from_slice(&buf) {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!("Malformed echo message ({e}), dropping");
