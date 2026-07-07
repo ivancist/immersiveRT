@@ -424,10 +424,28 @@ impl RoomRegistry {
         let pairing_url = format!("{}/phone?token={}", self.base_url, new_pairing_token);
 
         // Broadcast player-reconnected.
-        let username = self.rooms.get(&room_code).and_then(|r| {
-            r.slots
+        let (username, slots_snapshot) = self.rooms.get(&room_code).map(|r| {
+            let uname = r.slots
                 .get((slot_id - 1) as usize)
                 .and_then(|s| s.as_ref().map(|i| i.username.clone()))
+                .unwrap_or_default();
+            let snap: Vec<serde_json::Value> = r.slots.iter().enumerate()
+                .filter_map(|(i, s)| {
+                    s.as_ref().map(|info| {
+                        let status = match info.status {
+                            SlotStatus::Connected => "connected",
+                            SlotStatus::Disconnected => "hold",
+                            SlotStatus::Empty => "empty",
+                        };
+                        serde_json::json!({
+                            "slot": i + 1,
+                            "username": info.username,
+                            "status": status
+                        })
+                    })
+                })
+                .collect();
+            (uname, snap)
         }).unwrap_or_default();
 
         let event = serde_json::to_vec(&serde_json::json!({
@@ -447,7 +465,8 @@ impl RoomRegistry {
                 "slot": slot_id,
                 "room_code": room_code,
                 "reconnect_token": new_reconnect_token,
-                "pairing_url": pairing_url
+                "pairing_url": pairing_url,
+                "slots": slots_snapshot
             }
         })
     }
