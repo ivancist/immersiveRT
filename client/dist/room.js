@@ -176,6 +176,11 @@ function onServerMessage(msg) {
     case 'pair-error':
       handlePairError(msg.payload);
       break;
+    case 'leave-ack':
+      // Server confirmed leave processed; safe to close WS now.
+      if (ws) { ws.close(); ws = null; }
+      connectWS(null);
+      break;
     default:
       console.warn('[WS] Unknown message type:', msg.type);
   }
@@ -273,8 +278,12 @@ function initDesktopPage() {
       // Only reconnect when already on the room path (D-17)
       connectWS(function () { sendReconnect(codeFromPath, slotNum); });
     } else {
-      // On /room/ path but no session data — go back to lobby
+      // On /room/ path but no session data — show join form pre-filled with the code.
       history.replaceState(null, '', '/');
+      var codeInput = document.getElementById('input-room-code');
+      if (codeInput) { codeInput.value = codeFromPath; }
+      var joinForm = document.getElementById('view-join-form');
+      if (joinForm) { showSubForm(joinForm); }
     }
   }
 }
@@ -655,15 +664,22 @@ function leaveRoom() {
     localStorage.removeItem('token_' + currentRoom.room_code + '_' + currentRoom.slot);
   }
   currentRoom = null;
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'leave-room', from: myId, to: '', payload: {} }));
-  }
-  if (ws) { ws.close(); ws = null; }
   history.pushState(null, '', '/');
   showView('view-lobby');
   showLobbyActions();
-  // Re-warm WS so next create/join works without a page reload.
-  connectWS(null);
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // Server will process leave-room and reply with leave-ack before closing — avoids
+    // the race where ws.close() sends FIN before the data frame, causing on_client_disconnect
+    // to fire first and start a hold timer instead of freeing the slot.
+    ws.send(JSON.stringify({ type: 'leave-room', from: myId, to: '', payload: {} }));
+    // Fallback: if ack never arrives (e.g. server unreachable), close after 500ms.
+    setTimeout(function () {
+      if (ws) { ws.close(); ws = null; connectWS(null); }
+    }, 500);
+  } else {
+    if (ws) { ws.close(); ws = null; }
+    connectWS(null);
+  }
 }
 
 function showLobbyActions() {

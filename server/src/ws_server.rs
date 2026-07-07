@@ -264,7 +264,10 @@ where
                                 }
                                 "leave-room" => {
                                     room_registry.handle_leave(&envelope.from, &broker).await;
-                                    // No ack — client closes WS immediately after sending.
+                                    // Ack so client closes WS only after slot is freed —
+                                    // prevents the FIN-before-data race that triggers hold timer.
+                                    let ack = r#"{"type":"leave-ack"}"#;
+                                    let _ = write.send(Message::Text(ack.into())).await;
                                 }
                                 _ => {
                                     // Existing broker routing (offer, answer, ice-candidate, etc.)
