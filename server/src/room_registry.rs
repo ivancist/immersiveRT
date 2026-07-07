@@ -272,11 +272,32 @@ impl RoomRegistry {
                 reconnect_token: reconnect_token.clone(),
             });
 
-            (slot_id, reconnect_token, pairing_token, room_ref.code.clone())
+            // Snapshot current occupants (after inserting joiner) for join-ack.
+            let slots_snapshot: Vec<serde_json::Value> = room_ref
+                .slots
+                .iter()
+                .enumerate()
+                .filter_map(|(i, s)| {
+                    s.as_ref().map(|info| {
+                        let status = match info.status {
+                            SlotStatus::Connected => "connected",
+                            SlotStatus::Disconnected => "hold",
+                            SlotStatus::Empty => "empty",
+                        };
+                        serde_json::json!({
+                            "slot": i + 1,
+                            "username": info.username,
+                            "status": status
+                        })
+                    })
+                })
+                .collect();
+
+            (slot_id, reconnect_token, pairing_token, room_ref.code.clone(), slots_snapshot)
             // DashMap RefMut is dropped here at end of block.
         };
 
-        let (slot_id, reconnect_token, pairing_token, actual_room_code) = slot_result;
+        let (slot_id, reconnect_token, pairing_token, actual_room_code, slots_snapshot) = slot_result;
 
         // Store reconnect token server-side (T-03-05 mitigation).
         self.reconnect_tokens
@@ -303,7 +324,8 @@ impl RoomRegistry {
                 "slot": slot_id,
                 "room_code": actual_room_code,
                 "reconnect_token": reconnect_token,
-                "pairing_url": pairing_url
+                "pairing_url": pairing_url,
+                "slots": slots_snapshot
             }
         })
     }

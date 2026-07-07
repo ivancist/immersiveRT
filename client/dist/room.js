@@ -369,8 +369,16 @@ function handleJoinAck(payload) {
 
   renderRoomPage(slot, roomCode, pairingUrl);
 
-  // Server excludes the joiner from its own player-joined broadcast; self-update.
-  updateSlotRow(slot, 'connected', pendingUsername || 'Player');
+  // Populate roster from snapshot (includes all current occupants).
+  var slots = payload.slots;
+  if (Array.isArray(slots)) {
+    slots.forEach(function (s) {
+      updateSlotRow(s.slot, s.status === 'hold' ? 'hold' : 'connected', s.username);
+    });
+  } else {
+    // Fallback: server didn't send snapshot — at least show own slot.
+    updateSlotRow(slot, 'connected', pendingUsername || 'Player');
+  }
   if (pendingUsername) { appendEventLog('player-joined', slot, pendingUsername); }
 }
 
