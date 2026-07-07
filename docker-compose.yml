@@ -22,7 +22,12 @@ services:
     ports:
       - "4433:4433/udp"   # WebTransport (QUIC/HTTP3)
       - "9090:9090/tcp"   # WebSocket(S) signaling fallback
-      - "8081:8081/tcp"   # TURN credential HTTP endpoint
+      # Port 8081 (TURN credential endpoint) is intentionally NOT published to the
+      # host. The endpoint serves plain HTTP; exposing it directly to the internet
+      # would transmit the API_TOKEN and TURN credentials in cleartext.
+      # Clients should obtain TURN credentials via the authenticated WS/WT signaling
+      # channel instead. For direct access during development, use docker network
+      # addressing or add TLS before re-exposing publicly.
     environment:
       - CERT_PATH=${CERT_PATH}
       - KEY_PATH=${KEY_PATH}
