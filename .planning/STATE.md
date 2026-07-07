@@ -6,14 +6,14 @@ current_phase: 03
 current_phase_name: session-and-pairing
 status: executing
 stopped_at: Phase 3 context gathered
-last_updated: "2026-07-07T14:08:27.692Z"
+last_updated: "2026-07-07T14:21:40.665Z"
 last_activity: 2026-07-07
 last_activity_desc: Phase 03 execution started
 progress:
   total_phases: 8
   completed_phases: 2
   total_plans: 12
-  completed_plans: 10
+  completed_plans: 11
   percent: 25
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-06)
 ## Current Position
 
 Phase: 03 (session-and-pairing) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-07-07 — Phase 03 execution started
 
@@ -67,6 +67,7 @@ Progress: [███████░░░] 67%
 | Phase 02 P04 | 4 min | 2 tasks | 2 files |
 | Phase 03 P01 | 16 | 3 tasks | 4 files |
 | Phase 03 P03 | 2 min | 2 tasks | 2 files |
+| Phase 03 P02 | 18 min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -96,6 +97,8 @@ Recent decisions affecting current work:
 - [Phase ?]: static-auth-secret via CLI arg not turnserver.conf (T-02-07)
 - [Phase ?]: axum io::Error mapped to anyhow::Error for try_join! unification
 - [Phase ?]: userid=anonymous placeholder for Phase 2; Phase 4 supplies real client session ID
+- [Phase ?]: Arc<RoomRegistry> only threaded through relay functions — base_url and pairing_secret stored inside registry from Plan 03-01 constructor
+- [Phase ?]: Startup log includes base_url but not pairing_token_secret value — T-03-07 mitigation enforced at main.rs level
 
 ### Pending Todos
 
@@ -122,6 +125,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-07T14:08:27.689Z
+Last session: 2026-07-07T14:21:34.703Z
 Stopped at: Phase 3 context gathered
 Resume file: .planning/phases/03-session-and-pairing/03-CONTEXT.md
