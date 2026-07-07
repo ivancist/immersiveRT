@@ -100,7 +100,21 @@ Plans:
   4. Disconnecting a phone and reconnecting within 60 seconds reclaims the same slot and playerId without re-entering the code
   5. Room lifecycle events (player joined, left, reconnected, room full) are observable on the desktop — at minimum logged to console or shown in a debug overlay
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+**Wave 1** *(parallel)*
+
+- [ ] 03-01-PLAN.md — Package slopcheck + pairing_token.rs (HMAC token engine) + room_registry.rs (slot/hold-timer/lifecycle state)
+- [ ] 03-03-PLAN.md — docker/nginx/nginx.conf (HTTPS + SPA routing) + docker-compose.yml nginx update
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-02-PLAN.md — signaling.rs payload types + ws_server/wt_server join-room dispatch + main.rs env vars + Arc<RoomRegistry> injection
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 03-04-PLAN.md — client/dist/index.html + room.js (lobby, room page, phone landing SPA) + human verification checkpoint
 
 ### Phase 4: Phone Bootstrap and WebRTC Channels
 
