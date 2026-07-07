@@ -11,6 +11,7 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::broker::SignalingBroker;
+use crate::room_registry::RoomRegistry;
 use crate::signaling::parse_envelope;
 
 /// Maximum WebSocket message / frame size — ample for IMU packets, blocks 64 MiB default abuse.
@@ -49,6 +50,7 @@ pub(crate) fn load_tls_acceptor(cert_path: &str, key_path: &str) -> anyhow::Resu
 pub async fn run(
     port: u16,
     broker: Arc<SignalingBroker>,
+    room_registry: Arc<RoomRegistry>,
     cert_path: &str,
     key_path: &str,
 ) -> anyhow::Result<()> {
@@ -64,12 +66,13 @@ pub async fn run(
             None
         }
     };
-    run_with_listener(listener, broker, tls).await
+    run_with_listener(listener, broker, room_registry, tls).await
 }
 
 pub async fn run_with_listener(
     listener: TcpListener,
     broker: Arc<SignalingBroker>,
+    room_registry: Arc<RoomRegistry>,
     tls: Option<TlsAcceptor>,
 ) -> anyhow::Result<()> {
     let sem = Arc::new(Semaphore::new(MAX_WS_CONNECTIONS));
@@ -79,10 +82,11 @@ pub async fn run_with_listener(
                 let permit = sem.clone().acquire_owned().await
                     .expect("WS connection semaphore was unexpectedly closed");
                 let broker = broker.clone();
+                let room_registry = room_registry.clone();
                 let tls = tls.clone();
                 tokio::spawn(async move {
                     let _permit = permit; // Released when the connection closes
-                    if let Err(e) = handle_ws_connection(stream, addr, broker, tls).await {
+                    if let Err(e) = handle_ws_connection(stream, addr, broker, room_registry, tls).await {
                         tracing::warn!("WS connection error from {addr}: {e}");
                     }
                 });
@@ -105,6 +109,7 @@ async fn handle_ws_connection(
     tcp_stream: tokio::net::TcpStream,
     addr: SocketAddr,
     broker: Arc<SignalingBroker>,
+    room_registry: Arc<RoomRegistry>,
     tls: Option<TlsAcceptor>,
 ) -> anyhow::Result<()> {
     let config = WebSocketConfig::default()
@@ -116,14 +121,14 @@ async fn handle_ws_connection(
     // go through the same relay logic after the WS upgrade — no boxing needed.
     if let Some(acceptor) = tls {
         match acceptor.accept(tcp_stream).await {
-            Ok(tls_stream) => relay_ws(tls_stream, addr, broker, config).await,
+            Ok(tls_stream) => relay_ws(tls_stream, addr, broker, room_registry, config).await,
             Err(e) => {
                 tracing::warn!("TLS handshake failed from {addr}: {e}");
                 Ok(())
             }
         }
     } else {
-        relay_ws(tcp_stream, addr, broker, config).await
+        relay_ws(tcp_stream, addr, broker, room_registry, config).await
     }
 }
 
@@ -136,6 +141,7 @@ async fn relay_ws<S>(
     stream: S,
     addr: SocketAddr,
     broker: Arc<SignalingBroker>,
+    room_registry: Arc<RoomRegistry>,
     config: WebSocketConfig,
 ) -> anyhow::Result<()>
 where
@@ -220,19 +226,59 @@ where
                                 );
                                 continue;
                             }
-                            // Route to the target client; caller logs the warning per D-05.
-                            let payload = match serde_json::to_vec(&envelope) {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    tracing::warn!("Failed to re-serialize envelope: {e}");
-                                    continue;
+                            // Dispatch on message type: room-aware types go to room_registry;
+                            // all other types (offer, answer, ice-candidate) route via broker (D-09).
+                            match envelope.msg_type.as_str() {
+                                "join-room" => {
+                                    let ack = room_registry
+                                        .handle_join(&envelope.from, &envelope.payload, &broker)
+                                        .await;
+                                    let ack_text = serde_json::to_string(&ack)
+                                        .unwrap_or_else(|e| {
+                                            tracing::warn!("Failed to serialize join-room ack: {e}");
+                                            String::new()
+                                        });
+                                    let _ = write.send(Message::Text(ack_text.into())).await;
                                 }
-                            };
-                            if !broker.route(&envelope.to, payload) {
-                                tracing::warn!(
-                                    to = %envelope.to,
-                                    "signaling target not connected, dropping"
-                                );
+                                "reconnect" => {
+                                    let ack = room_registry
+                                        .handle_reconnect(&envelope.from, &envelope.payload, &broker)
+                                        .await;
+                                    let ack_text = serde_json::to_string(&ack)
+                                        .unwrap_or_else(|e| {
+                                            tracing::warn!("Failed to serialize reconnect ack: {e}");
+                                            String::new()
+                                        });
+                                    let _ = write.send(Message::Text(ack_text.into())).await;
+                                }
+                                "pair" => {
+                                    let ack = room_registry
+                                        .handle_pair(&envelope.payload, &broker)
+                                        .await;
+                                    let ack_text = serde_json::to_string(&ack)
+                                        .unwrap_or_else(|e| {
+                                            tracing::warn!("Failed to serialize pair ack: {e}");
+                                            String::new()
+                                        });
+                                    let _ = write.send(Message::Text(ack_text.into())).await;
+                                }
+                                _ => {
+                                    // Existing broker routing (offer, answer, ice-candidate, etc.)
+                                    // Route to the target client; caller logs the warning per D-05.
+                                    let payload = match serde_json::to_vec(&envelope) {
+                                        Ok(p) => p,
+                                        Err(e) => {
+                                            tracing::warn!("Failed to re-serialize envelope: {e}");
+                                            continue;
+                                        }
+                                    };
+                                    if !broker.route(&envelope.to, payload) {
+                                        tracing::warn!(
+                                            to = %envelope.to,
+                                            "signaling target not connected, dropping"
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -269,6 +315,9 @@ where
             if let Some(id) = &my_id {
                 broker.unregister(id);
                 tracing::info!(client_id = %id, "WS client unregistered");
+                // Lifecycle event: mark slot Disconnected, broadcast player-disconnected,
+                // spawn hold timer (D-16, D-19, SESS-06). Per D-09: called after broker.unregister.
+                room_registry.on_client_disconnect(id, &broker).await;
             }
         }
         Err(e) => {

@@ -1,4 +1,6 @@
 mod broker;
+mod pairing_token;
+mod room_registry;
 mod signaling;
 mod turn_creds;
 mod wt_server;
@@ -81,16 +83,60 @@ async fn main() -> anyhow::Result<()> {
             "API_TOKEN environment variable not set — \
              generate a random token and set it before starting the server"
         ))?;
+    // PAIRING_TOKEN_SECRET: HMAC secret for signing pairing tokens (D-14).
+    // Required — server refuses to start without it (T-03-07 mitigation: value never logged).
+    let pairing_token_secret = std::env::var("PAIRING_TOKEN_SECRET")
+        .map_err(|_| anyhow::anyhow!(
+            "PAIRING_TOKEN_SECRET environment variable not set — \
+             generate a random 32+ char secret and set it before starting the server"
+        ))?;
+    // BASE_URL: public-facing HTTPS base URL embedded in pairing tokens (D-13).
+    // Required — server refuses to start without it.
+    let base_url = std::env::var("BASE_URL")
+        .map_err(|_| anyhow::anyhow!(
+            "BASE_URL environment variable not set — \
+             set BASE_URL=https://<your-ip>:8443 before starting the server"
+        ))?;
+    // HOLD_TTL_SECS: how long to hold a disconnected player's slot before releasing it (D-16).
+    let hold_ttl_secs: u64 = std::env::var("HOLD_TTL_SECS")
+        .unwrap_or_else(|_| "60".into())
+        .parse()
+        .map_err(|e| anyhow::anyhow!("HOLD_TTL_SECS must be a valid u64 (seconds): {e}"))?;
+    // PAIRING_TOKEN_TTL_SECS: lifetime of a pairing token before it expires (D-14).
+    let pairing_ttl_secs: u64 = std::env::var("PAIRING_TOKEN_TTL_SECS")
+        .unwrap_or_else(|_| "90".into())
+        .parse()
+        .map_err(|e| anyhow::anyhow!("PAIRING_TOKEN_TTL_SECS must be a valid u64 (seconds): {e}"))?;
     let http_port: u16 = std::env::var("HTTP_PORT")
         .unwrap_or_else(|_| "8081".into())
         .parse()
         .map_err(|e| anyhow::anyhow!("HTTP_PORT must be a valid u16 port number: {e}"))?;
 
-    tracing::info!(cert_path, key_path, wt_port, ws_port, http_port, "Server starting");
+    // T-03-07: log base_url (public, safe) but NOT pairing_token_secret value.
+    tracing::info!(
+        cert_path,
+        key_path,
+        wt_port,
+        ws_port,
+        http_port,
+        base_url = %base_url,
+        pairing_secret_set = true,
+        "Server starting"
+    );
 
     // Shared in-process signaling broker — both WT and WS listeners receive a
     // cloned handle pointing to the same DashMap (D-03).
     let broker = Arc::new(broker::SignalingBroker::new());
+
+    // Room registry — manages room lifecycle, slot assignment, hold timers,
+    // pairing token generation, and reconnect token lookup (SESS-01..SESS-06).
+    // Constructed here and cloned into both WT and WS listeners.
+    let room_registry = Arc::new(room_registry::RoomRegistry::new(
+        pairing_token_secret,
+        base_url,
+        hold_ttl_secs,
+        pairing_ttl_secs,
+    ));
 
     // Axum HTTP state — Arc-wrapped so the handler can clone the secret reference.
     let app_state = Arc::new(AppState { turn_shared_secret, api_token });
@@ -103,8 +149,8 @@ async fn main() -> anyhow::Result<()> {
     // Run all three servers concurrently; stop if any one exits or errors.
     // The axum serve future returns io::Error; map to anyhow to unify error types.
     tokio::try_join!(
-        wt_server::run(&cert_path, &key_path, wt_port, broker.clone()),
-        ws_server::run(ws_port, broker.clone(), &cert_path, &key_path),
+        wt_server::run(&cert_path, &key_path, wt_port, broker.clone(), room_registry.clone()),
+        ws_server::run(ws_port, broker.clone(), room_registry.clone(), &cert_path, &key_path),
         async { axum::serve(http_listener, http_app).await.map_err(anyhow::Error::from) },
     )?;
 

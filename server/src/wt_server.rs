@@ -5,6 +5,7 @@ use wtransport::endpoint::IncomingSession;
 use wtransport::{Endpoint, Identity, ServerConfig};
 
 use crate::broker::SignalingBroker;
+use crate::room_registry::RoomRegistry;
 use crate::signaling::parse_envelope;
 
 /// Maximum number of simultaneous WebTransport connections (mirrors ws_server.rs).
@@ -20,6 +21,7 @@ pub async fn run(
     key_path: &str,
     port: u16,
     broker: Arc<SignalingBroker>,
+    room_registry: Arc<RoomRegistry>,
 ) -> anyhow::Result<()> {
     let identity = Identity::load_pemfiles(cert_path, key_path)
         .await
@@ -38,11 +40,12 @@ pub async fn run(
     loop {
         let incoming = server.accept().await;
         let broker = broker.clone();
+        let room_registry = room_registry.clone();
         let permit = sem.clone().acquire_owned().await
             .expect("WT connection semaphore was unexpectedly closed");
         tokio::spawn(async move {
             let _permit = permit; // Released when the connection task exits
-            if let Err(e) = handle_wt_connection(incoming, broker).await {
+            if let Err(e) = handle_wt_connection(incoming, broker, room_registry).await {
                 tracing::error!("WT connection error: {e:#}");
             }
         });
@@ -59,6 +62,7 @@ pub async fn run(
 async fn handle_wt_connection(
     incoming: IncomingSession,
     broker: Arc<SignalingBroker>,
+    room_registry: Arc<RoomRegistry>,
 ) -> anyhow::Result<()> {
     let request = incoming
         .await
@@ -203,26 +207,58 @@ async fn handle_wt_connection(
                             continue;
                         }
 
-                        // Re-serialize the envelope to forward its bytes via the broker.
-                        let payload = match serde_json::to_vec(&envelope) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                tracing::warn!("Failed to re-serialize envelope: {e}");
+                        // Dispatch on message type: room-aware types go to room_registry;
+                        // all other types (offer, answer, ice-candidate) route via broker (D-09).
+                        // For room-aware types: write ack bytes to `send` then finish() the stream.
+                        // For broker-routed types: route, then finish() (no response on stream).
+                        match envelope.msg_type.as_str() {
+                            "join-room" => {
+                                let ack = room_registry
+                                    .handle_join(&envelope.from, &envelope.payload, &broker)
+                                    .await;
+                                let ack_bytes = serde_json::to_vec(&ack).unwrap_or_default();
+                                let _ = send.write_all(&ack_bytes).await;
                                 let _ = send.finish().await;
-                                continue;
                             }
-                        };
+                            "reconnect" => {
+                                let ack = room_registry
+                                    .handle_reconnect(&envelope.from, &envelope.payload, &broker)
+                                    .await;
+                                let ack_bytes = serde_json::to_vec(&ack).unwrap_or_default();
+                                let _ = send.write_all(&ack_bytes).await;
+                                let _ = send.finish().await;
+                            }
+                            "pair" => {
+                                let ack = room_registry
+                                    .handle_pair(&envelope.payload, &broker)
+                                    .await;
+                                let ack_bytes = serde_json::to_vec(&ack).unwrap_or_default();
+                                let _ = send.write_all(&ack_bytes).await;
+                                let _ = send.finish().await;
+                            }
+                            _ => {
+                                // Re-serialize the envelope to forward its bytes via the broker.
+                                let payload = match serde_json::to_vec(&envelope) {
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        tracing::warn!("Failed to re-serialize envelope: {e}");
+                                        let _ = send.finish().await;
+                                        continue;
+                                    }
+                                };
 
-                        // Route to the target client; caller logs the warning per D-05.
-                        if !broker.route(&envelope.to, payload) {
-                            tracing::warn!(
-                                to = %envelope.to,
-                                "signaling target not connected, dropping"
-                            );
+                                // Route to the target client; caller logs the warning per D-05.
+                                if !broker.route(&envelope.to, payload) {
+                                    tracing::warn!(
+                                        to = %envelope.to,
+                                        "signaling target not connected, dropping"
+                                    );
+                                }
+
+                                // Finish the send side — we never send a response back on this stream.
+                                let _ = send.finish().await;
+                            }
                         }
-
-                        // Finish the send side — we never send a response back on this stream.
-                        let _ = send.finish().await;
                     }
                     Err(e) => {
                         tracing::info!(client_id = %my_id, "WT accept_bi closed ({e}), exiting relay loop");
@@ -291,5 +327,8 @@ async fn handle_wt_connection(
 
     broker.unregister(&my_id);
     tracing::info!(client_id = %my_id, "WT client unregistered");
+    // Lifecycle event: mark slot Disconnected, broadcast player-disconnected,
+    // spawn hold timer (D-16, D-19, SESS-06). Per D-09: called after broker.unregister.
+    room_registry.on_client_disconnect(&my_id, &broker).await;
     Ok(())
 }
