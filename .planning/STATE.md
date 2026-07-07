@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-06)
 Phase: 02 (signaling-turn-and-deployment) — EXECUTING
 Plan: 4 of 5
 Status: Ready to execute
-Last activity: 2026-07-06 — Phase 02 execution started
+Last activity: 2026-07-07 - Completed quick task 260707-f1x: Fix cert permissions for cold start — Phase 02 execution started
 
 Progress: [███████░░░] 67%
 
@@ -105,6 +105,12 @@ None yet.
 - Phase 2 critical: TURN credential endpoint must generate at connection-start (not page load) to prevent staleness
 - Phase 5: Madgwick beta empirical tuning (0.1 default, ramp 0.2–0.3 at cold start) requires real-device validation
 - Phase 5: ZUPT adaptive threshold values require empirical tuning — plan device testing session
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260707-f1x | Fix cert permissions for cold start | 2026-07-07 | 880ea1b | [260707-f1x-fix-cert-permissions-for-cold-start](./quick/260707-f1x-fix-cert-permissions-for-cold-start/) |
 
 ## Deferred Items
 
