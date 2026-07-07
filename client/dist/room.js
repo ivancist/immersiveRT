@@ -13,6 +13,7 @@ let myId = null;
 let currentRoom = null; // { slot, room_code }
 let wsReady = false;    // true once register ack confirmed (open + registered)
 let pendingMessageQueue = []; // messages queued before WS is ready
+let pendingUsername = null;   // username sent with join-room, used in handleJoinAck
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -194,27 +195,43 @@ function initDesktopPage() {
   });
 
   // Button wiring
-  var btnCreate = document.getElementById('btn-create-room');
-  var btnJoin   = document.getElementById('btn-join-room');
+  var btnCreate    = document.getElementById('btn-create-room');
+  var btnJoin      = document.getElementById('btn-join-room');
   var btnContinue  = document.getElementById('btn-continue');
   var btnJoinSubmit = document.getElementById('btn-join-submit');
+  var btnBackCreate = document.getElementById('btn-back-create');
+  var btnBackJoin  = document.getElementById('btn-back-join');
+  var lobbyActions = document.getElementById('lobby-actions');
   var gameSelect   = document.getElementById('view-game-select');
   var joinForm     = document.getElementById('view-join-form');
 
+  function showSubForm(form) {
+    if (lobbyActions) { lobbyActions.hidden = true; }
+    if (gameSelect)   { gameSelect.hidden = true; }
+    if (joinForm)     { joinForm.hidden = true; }
+    if (form)         { form.hidden = false; }
+  }
+
+  function showLobbyActions() {
+    if (gameSelect)   { gameSelect.hidden = true; }
+    if (joinForm)     { joinForm.hidden = true; }
+    if (lobbyActions) { lobbyActions.hidden = false; }
+  }
+
   if (btnCreate) {
-    btnCreate.addEventListener('click', function () {
-      // Show game type selector, hide join form
-      if (gameSelect) { gameSelect.hidden = false; }
-      if (joinForm)   { joinForm.hidden = true; }
-    });
+    btnCreate.addEventListener('click', function () { showSubForm(gameSelect); });
   }
 
   if (btnJoin) {
-    btnJoin.addEventListener('click', function () {
-      // Show join form, hide game select
-      if (joinForm)   { joinForm.hidden = false; }
-      if (gameSelect) { gameSelect.hidden = true; }
-    });
+    btnJoin.addEventListener('click', function () { showSubForm(joinForm); });
+  }
+
+  if (btnBackCreate) {
+    btnBackCreate.addEventListener('click', showLobbyActions);
+  }
+
+  if (btnBackJoin) {
+    btnBackJoin.addEventListener('click', showLobbyActions);
   }
 
   if (btnContinue) {
@@ -278,14 +295,27 @@ function initDesktopPage() {
 }
 
 function createRoom(gameType) {
-  disableButton('btn-continue', 'Creating...');
-  clearError('error-join');
+  var userEl = document.getElementById('input-create-username');
+  var rawName = userEl ? userEl.value.trim() : '';
 
-  // Auto-generate a host name (D-02: Create flow has no explicit username field)
-  var generatedName = 'Host-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+  if (!rawName) {
+    showError('error-create-username', 'Please enter your name.');
+    if (userEl) { userEl.classList.add('input--error'); }
+    return;
+  }
+  if (rawName.length > 64) {
+    showError('error-create-username', 'Name must be 64 characters or fewer.');
+    if (userEl) { userEl.classList.add('input--error'); }
+    return;
+  }
+  if (userEl) { userEl.classList.remove('input--error'); }
+  clearError('error-create-username');
+
+  disableButton('btn-continue', 'Creating...');
+  pendingUsername = rawName;
   sendMessage('join-room', {
-    username: generatedName,
-    room_code: '', // empty = create new room (D-04)
+    username: rawName,
+    room_code: '',
     game_type: gameType
   });
 }
@@ -326,6 +356,7 @@ function joinRoom(roomCode, username) {
 
   if (!valid) { return; }
 
+  pendingUsername = cleanUsername;
   disableButton('btn-join-submit', 'Joining...');
   sendMessage('join-room', {
     username: cleanUsername,
@@ -351,6 +382,10 @@ function handleJoinAck(payload) {
   history.pushState({ slot: slot, room_code: roomCode }, '', '/room/' + roomCode);
 
   renderRoomPage(slot, roomCode, pairingUrl);
+
+  // Server excludes the joiner from its own player-joined broadcast; self-update.
+  updateSlotRow(slot, 'connected', pendingUsername || 'Player');
+  if (pendingUsername) { appendEventLog('player-joined', slot, pendingUsername); }
 }
 
 function handleJoinError(reason) {

@@ -214,6 +214,16 @@
       margin-top: 24px;
     }
 
+    .btn-back {
+      background: none;
+      border: none;
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0;
+    }
+    .btn-back:hover { color: var(--color-text-primary); }
+
     /* ──────────────────────────────────────────
        View: Lobby
     ────────────────────────────────────────── */
@@ -430,7 +440,7 @@
       <h1>ImmersiveRT</h1>
       <p class="subtitle">Create or join a room to get started.</p>
 
-      <div class="btn-row">
+      <div class="btn-row" id="lobby-actions">
         <button class="btn" id="btn-create-room">Create Room</button>
         <button class="btn" id="btn-join-room">Join Room</button>
       </div>
@@ -438,12 +448,27 @@
       <!-- Create Room sub-form (revealed on Create Room click) -->
       <div id="view-game-select" class="sub-form" hidden>
         <div class="form-group">
+          <label for="input-create-username">Your Name</label>
+          <input
+            id="input-create-username"
+            class="input"
+            type="text"
+            placeholder="Your name"
+            maxlength="64"
+            autocomplete="off"
+          />
+          <div class="error-msg" id="error-create-username"></div>
+        </div>
+        <div class="form-group">
           <label for="game-type">Game Type</label>
           <select id="game-type" class="input">
             <option value="placeholder">Placeholder Game</option>
           </select>
         </div>
-        <button class="btn" id="btn-continue">Continue</button>
+        <div style="display:flex;gap:12px;align-items:center;margin-top:8px;">
+          <button class="btn" id="btn-continue">Continue</button>
+          <button class="btn-back" id="btn-back-create" type="button">← Back</button>
+        </div>
       </div>
 
       <!-- Join Room sub-form (revealed on Join Room click) -->
@@ -473,7 +498,10 @@
           />
           <div class="error-msg" id="error-username"></div>
         </div>
-        <button class="btn" id="btn-join-submit">Join Room</button>
+        <div style="display:flex;gap:12px;align-items:center;margin-top:8px;">
+          <button class="btn" id="btn-join-submit">Join Room</button>
+          <button class="btn-back" id="btn-back-join" type="button">← Back</button>
+        </div>
         <div class="error-msg" id="error-join" style="margin-top: 8px;"></div>
       </div>
     </div>
