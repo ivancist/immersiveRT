@@ -1,5 +1,4 @@
 mod broker;
-mod echo;
 mod signaling;
 mod turn_creds;
 mod wt_server;
