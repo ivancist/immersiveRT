@@ -262,17 +262,16 @@ function initDesktopPage() {
   // If we're already on a /room/ path (e.g. user refreshed), check sessionStorage
   var pathMatch = window.location.pathname.match(/^\/room\/([A-Z0-9]+)$/i);
   if (pathMatch) {
-    var storedCode  = sessionStorage.getItem('room_code');
-    var storedSlot  = sessionStorage.getItem('my_slot');
-    if (storedCode && storedSlot) {
-      currentRoom = { slot: parseInt(storedSlot, 10), room_code: storedCode };
-      renderRoomPage(
-        parseInt(storedSlot, 10),
-        storedCode,
-        null /* no pairing_url after page refresh */
-      );
+    var codeFromPath = pathMatch[1].toUpperCase();
+    // sessionStorage preferred (tab-specific, reload-safe); localStorage fallback for new-tab reconnect.
+    var storedSlot   = sessionStorage.getItem('slot_' + codeFromPath)
+                    || localStorage.getItem('slot_' + codeFromPath);
+    if (storedSlot) {
+      var slotNum = parseInt(storedSlot, 10);
+      currentRoom = { slot: slotNum, room_code: codeFromPath };
+      renderRoomPage(slotNum, codeFromPath, null);
       // Only reconnect when already on the room path (D-17)
-      connectWS(function () { sendReconnect(); });
+      connectWS(function () { sendReconnect(codeFromPath, slotNum); });
     } else {
       // On /room/ path but no session data — go back to lobby
       history.replaceState(null, '', '/');
@@ -357,10 +356,17 @@ function handleJoinAck(payload) {
   var reconnectToken = payload.reconnect_token;
   var pairingUrl     = payload.pairing_url;
 
-  // Store reconnect token — never log the value (T-03-09)
-  sessionStorage.setItem('reconnect_token', reconnectToken);
-  sessionStorage.setItem('room_code', roomCode);
-  sessionStorage.setItem('my_slot', String(slot));
+  // Store reconnect token — never log the value (T-03-09).
+  // sessionStorage: tab-specific, survives reload — primary slot key.
+  // localStorage slot: only written on first join (sessionStorage empty), so reconnects
+  //   don't overwrite the newest joiner's slot (which enables new-tab reconnect for the
+  //   most-recently-closed tab). Token keyed by room+slot — no cross-tab collision.
+  var isFirstJoin = !sessionStorage.getItem('slot_' + roomCode);
+  sessionStorage.setItem('slot_' + roomCode, String(slot));
+  if (isFirstJoin) {
+    localStorage.setItem('slot_' + roomCode, String(slot));
+  }
+  localStorage.setItem('token_' + roomCode + '_' + slot, reconnectToken);
 
   currentRoom = { slot: slot, room_code: roomCode };
 
@@ -385,9 +391,11 @@ function handleJoinAck(payload) {
 function handleJoinError(reason) {
   // Reconnect failure while on room page — session expired or room gone.
   if (currentRoom || reason === 'invalid_token') {
-    sessionStorage.removeItem('reconnect_token');
-    sessionStorage.removeItem('room_code');
-    sessionStorage.removeItem('my_slot');
+    if (currentRoom) {
+      sessionStorage.removeItem('slot_' + currentRoom.room_code);
+      localStorage.removeItem('slot_' + currentRoom.room_code);
+      localStorage.removeItem('token_' + currentRoom.room_code + '_' + currentRoom.slot);
+    }
     currentRoom = null;
     history.replaceState(null, '', '/');
     showView('view-lobby');
@@ -641,14 +649,18 @@ function appendEventLog(event, slot, username) {
 
 function leaveRoom() {
   // Clear session so reload doesn't re-enter the room
-  sessionStorage.removeItem('reconnect_token');
-  sessionStorage.removeItem('room_code');
-  sessionStorage.removeItem('my_slot');
+  if (currentRoom) {
+    sessionStorage.removeItem('slot_' + currentRoom.room_code);
+    localStorage.removeItem('slot_' + currentRoom.room_code);
+    localStorage.removeItem('token_' + currentRoom.room_code + '_' + currentRoom.slot);
+  }
   currentRoom = null;
   if (ws) { ws.close(); ws = null; }
   history.pushState(null, '', '/');
   showView('view-lobby');
   showLobbyActions();
+  // Re-warm WS so next create/join works without a page reload.
+  connectWS(null);
 }
 
 function showLobbyActions() {
@@ -675,10 +687,13 @@ function showSubForm(form) {
   if (form)         { form.hidden = false; }
 }
 
-function sendReconnect() {
-  var token = sessionStorage.getItem('reconnect_token');
+function sendReconnect(roomCode, slot) {
+  var code  = roomCode || (currentRoom && currentRoom.room_code);
+  var slotN = slot     || (currentRoom && currentRoom.slot);
+  if (!code || !slotN) { return; }
+  var token = localStorage.getItem('token_' + code + '_' + slotN);
   if (token) {
-    // Send reconnect token — never log the value (T-03-09)
+    // Never log the value (T-03-09)
     sendMessage('reconnect', { reconnect_token: token });
     console.info('[WS] Reconnect token sent.');
   }

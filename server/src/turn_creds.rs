@@ -8,7 +8,7 @@ type HmacSha1 = Hmac<Sha1>;
 
 /// Ephemeral TURN credentials generated via coturn's `use-auth-secret` REST API
 /// mechanism (INFRA-04, D-06).
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct TurnCredentials {
     /// `"{expiry}:{userid}"` — expiry is Unix seconds when these credentials
     /// expire (NOT the issue time — see Pitfall 1 in RESEARCH.md).
