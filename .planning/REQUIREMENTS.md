@@ -17,12 +17,12 @@
 
 ### Session
 
-- [ ] **SESS-01**: Desktop player can join a room by entering a username — server assigns a named slot and a room code
-- [ ] **SESS-02**: Desktop shows a QR code unique to its player slot — phone scans to pair exclusively to that desktop
-- [ ] **SESS-03**: Desktop shows a short alphanumeric code as fallback for phones that cannot scan QR
-- [ ] **SESS-04**: Server holds a player's slot for 60 seconds after disconnect — phone or desktop can reclaim the same slot on reconnect
-- [ ] **SESS-05**: Room supports 2–8 desktop players simultaneously
-- [ ] **SESS-06**: Server emits room lifecycle events: player joined, player left, player reconnected, room full
+- [x] **SESS-01**: Desktop player can join a room by entering a username — server assigns a named slot and a room code
+- [x] **SESS-02**: Desktop shows a QR code unique to its player slot — phone scans to pair exclusively to that desktop
+- [x] **SESS-03**: Desktop shows a short alphanumeric code as fallback for phones that cannot scan QR
+- [x] **SESS-04**: Server holds a player's slot for 60 seconds after disconnect — phone or desktop can reclaim the same slot on reconnect
+- [x] **SESS-05**: Room supports 2–8 desktop players simultaneously
+- [x] **SESS-06**: Server emits room lifecycle events: player joined, player left, player reconnected, room full
 
 ### Phone Client
 
@@ -117,12 +117,12 @@
 | INFRA-04 | Phase 2 | Complete |
 | INFRA-06 | Phase 2 | Complete |
 | INFRA-07 | Phase 2 | Complete |
-| SESS-01 | Phase 3 | Pending |
-| SESS-02 | Phase 3 | Pending |
-| SESS-03 | Phase 3 | Pending |
-| SESS-04 | Phase 3 | Pending |
-| SESS-05 | Phase 3 | Pending |
-| SESS-06 | Phase 3 | Pending |
+| SESS-01 | Phase 3 | Complete |
+| SESS-02 | Phase 3 | Complete |
+| SESS-03 | Phase 3 | Complete |
+| SESS-04 | Phase 3 | Complete |
+| SESS-05 | Phase 3 | Complete |
+| SESS-06 | Phase 3 | Complete |
 | PHONE-01 | Phase 4 | Pending |
 | PHONE-02 | Phase 4 | Pending |
 | PHONE-03 | Phase 4 | Pending |
