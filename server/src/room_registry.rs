@@ -619,6 +619,62 @@ impl RoomRegistry {
         self.hold_timers.insert((room_code, slot_id), handle);
     }
 
+    /// Explicit player leave: immediately release the slot and broadcast player-left.
+    /// Unlike on_client_disconnect, no hold timer is started — the leave is intentional.
+    pub async fn handle_leave(&self, client_id: &str, broker: &SignalingBroker) {
+        let found: Option<(RoomCode, SlotId, String)> = {
+            let mut found = None;
+            'outer: for mut room_ref in self.rooms.iter_mut() {
+                let code = room_ref.code.clone();
+                for (idx, slot) in room_ref.slots.iter_mut().enumerate() {
+                    if let Some(info) = slot {
+                        if info.client_id == client_id {
+                            let slot_id = (idx + 1) as u8;
+                            let username = info.username.clone();
+                            *slot = None;
+                            found = Some((code, slot_id, username));
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+            found
+        };
+
+        let (room_code, slot_id, username) = match found {
+            Some(v) => v,
+            None => {
+                tracing::debug!(client_id = %client_id, "leave-room: client not in any room");
+                return;
+            }
+        };
+
+        // Cancel stale hold timer if any (edge case: prior disconnect still pending).
+        if let Some((_, handle)) = self.hold_timers.remove(&(room_code.clone(), slot_id)) {
+            handle.abort();
+        }
+
+        // Remove reconnect token — slot is gone, token is invalid.
+        self.reconnect_tokens.retain(|_, v| v != &(room_code.clone(), slot_id));
+
+        let event = serde_json::to_vec(&serde_json::json!({
+            "type": "room-event",
+            "payload": {
+                "event": "player-left",
+                "slot": slot_id,
+                "username": username
+            }
+        }))
+        .unwrap_or_default();
+        self.broadcast_to_room(&room_code, client_id, event, broker);
+
+        tracing::info!(
+            room_code = %room_code, slot_id = %slot_id,
+            username = %username,
+            "explicit leave — slot released immediately"
+        );
+    }
+
     /// Release a slot only if it is still in Disconnected state.
     ///
     /// Returns `Some(username)` if the slot was released, `None` if the slot

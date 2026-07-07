@@ -236,6 +236,10 @@ async fn handle_wt_connection(
                                 let _ = send.write_all(&ack_bytes).await;
                                 let _ = send.finish().await;
                             }
+                            "leave-room" => {
+                                room_registry.handle_leave(&envelope.from, &broker).await;
+                                let _ = send.finish().await;
+                            }
                             _ => {
                                 // Re-serialize the envelope to forward its bytes via the broker.
                                 let payload = match serde_json::to_vec(&envelope) {

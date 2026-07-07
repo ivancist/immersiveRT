@@ -655,6 +655,9 @@ function leaveRoom() {
     localStorage.removeItem('token_' + currentRoom.room_code + '_' + currentRoom.slot);
   }
   currentRoom = null;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'leave-room', from: myId, to: '', payload: {} }));
+  }
   if (ws) { ws.close(); ws = null; }
   history.pushState(null, '', '/');
   showView('view-lobby');

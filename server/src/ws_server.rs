@@ -262,6 +262,10 @@ where
                                         });
                                     let _ = write.send(Message::Text(ack_text.into())).await;
                                 }
+                                "leave-room" => {
+                                    room_registry.handle_leave(&envelope.from, &broker).await;
+                                    // No ack — client closes WS immediately after sending.
+                                }
                                 _ => {
                                     // Existing broker routing (offer, answer, ice-candidate, etc.)
                                     // Route to the target client; caller logs the warning per D-05.
