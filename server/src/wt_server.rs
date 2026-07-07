@@ -75,30 +75,37 @@ async fn handle_wt_connection(
     tracing::info!("WT session accepted");
 
     // Read the first client-opened stream to get the "register" message.
+    // A 10-second timeout prevents a client that never sends FIN from leaking a task
+    // indefinitely. Without this guard, every half-open connection holds a tokio task
+    // and a connection permit forever.
     let (mut send_init, mut recv_init) = conn
         .accept_bi()
         .await
         .context("accept_bi for register failed")?;
 
-    let mut buf: Vec<u8> = Vec::new();
-    loop {
-        let mut chunk = vec![0u8; 4096];
-        match recv_init
-            .read(&mut chunk)
-            .await
-            .context("recv read for register failed")?
-        {
-            Some(n) => buf.extend_from_slice(&chunk[..n]),
-            None => break, // FIN — stream complete
-        }
-        if buf.len() > 65_536 {
-            tracing::warn!(
-                "Oversized WT register message ({} bytes), dropping connection",
-                buf.len()
-            );
-            return Ok(());
-        }
-    }
+    let buf = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        async {
+            let mut buf = Vec::new();
+            loop {
+                let mut chunk = vec![0u8; 4096];
+                match recv_init.read(&mut chunk).await.context("recv read for register failed")? {
+                    Some(n) => buf.extend_from_slice(&chunk[..n]),
+                    None => break, // FIN — stream complete
+                }
+                if buf.len() > 65_536 {
+                    return Err(anyhow::anyhow!(
+                        "Oversized WT register message ({} bytes), dropping connection",
+                        buf.len()
+                    ));
+                }
+            }
+            Ok::<Vec<u8>, anyhow::Error>(buf)
+        },
+    )
+    .await
+    .context("WT registration timed out (client did not send register within 10s)")??;
+
     // Close the send side of the registration stream (we don't send a response).
     let _ = send_init.finish().await;
 
