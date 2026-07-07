@@ -14,7 +14,7 @@ ImmersiveRT is built from the network stack outward. Phase 1 and 2 establish the
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Server and Transport Foundation** - Rust WebTransport server binary, mkcert TLS for dev, WebSocket signaling fallback, verified end-to-end QUIC connection (completed 2026-07-06)
-- [ ] **Phase 2: Signaling, TURN, and Deployment** - WebRTC ICE signaling broker, coturn with host networking, ephemeral TURN credentials, full Docker Compose stack
+- [x] **Phase 2: Signaling, TURN, and Deployment** - WebRTC ICE signaling broker, coturn with host networking, ephemeral TURN credentials, full Docker Compose stack (completed 2026-07-07)
 - [ ] **Phase 3: Session and Pairing** - Room join, QR code + short code pairing, slot assignment, reconnect hold, 2-8 player support, room lifecycle events
 - [ ] **Phase 4: Phone Bootstrap and WebRTC Channels** - Phone web app delivery, iOS DeviceMotion permission gate, Wake Lock, heartbeat, unreliable data channels to all desktops
 - [ ] **Phase 5: Sensor Fusion and Packet Encoding** - On-device Madgwick, adaptive ZUPT, Kalman dead-reckoning, gesture displacement, touch capture, 40-byte binary packet at 60Hz
