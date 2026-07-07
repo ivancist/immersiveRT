@@ -29,11 +29,18 @@ impl SignalingBroker {
     ///
     /// The caller owns the returned `UnboundedReceiver` and must drain it in its
     /// connection task. The corresponding `UnboundedSender` is stored in the map.
-    /// Calling `register` for an already-registered ID replaces the previous sender.
-    pub fn register(&self, id: ClientId) -> mpsc::UnboundedReceiver<Vec<u8>> {
+    ///
+    /// Returns `Err` if a client with this ID is already registered. The caller
+    /// must close the connection and surface the error rather than silently
+    /// overwriting the existing registration — an existing client's channel
+    /// becoming dead would cause it to be force-disconnected without notification.
+    pub fn register(&self, id: ClientId) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, &'static str> {
+        if self.clients.contains_key(&id) {
+            return Err("client ID already registered");
+        }
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
         self.clients.insert(id, tx);
-        rx
+        Ok(rx)
     }
 
     /// Remove a client from the registry.
@@ -67,7 +74,7 @@ mod tests {
     #[tokio::test]
     async fn test_route_to_registered_client() {
         let broker = SignalingBroker::new();
-        let mut rx = broker.register("id-A".into());
+        let mut rx = broker.register("id-A".into()).expect("first registration should succeed");
         let payload = b"hello".to_vec();
 
         let routed = broker.route("id-A", payload.clone());
@@ -89,10 +96,19 @@ mod tests {
     #[test]
     fn test_unregister_then_route_returns_false() {
         let broker = SignalingBroker::new();
-        let _rx = broker.register("id-A".into());
+        let _rx = broker.register("id-A".into()).expect("first registration should succeed");
         broker.unregister("id-A");
         let result = broker.route("id-A", b"data".to_vec());
         assert!(!result, "route after unregister should return false");
+    }
+
+    /// Re-registration of an already-registered ID returns an error.
+    #[test]
+    fn test_duplicate_registration_rejected() {
+        let broker = SignalingBroker::new();
+        let _rx = broker.register("id-A".into()).expect("first registration should succeed");
+        let result = broker.register("id-A".into());
+        assert!(result.is_err(), "duplicate registration should return Err");
     }
 
     /// Two registrations produce independent channels — payload to id-A never
@@ -100,8 +116,8 @@ mod tests {
     #[tokio::test]
     async fn test_register_returns_independent_receivers() {
         let broker = SignalingBroker::new();
-        let mut rx_a = broker.register("id-A".into());
-        let mut rx_b = broker.register("id-B".into());
+        let mut rx_a = broker.register("id-A".into()).expect("first registration of id-A should succeed");
+        let mut rx_b = broker.register("id-B".into()).expect("first registration of id-B should succeed");
 
         broker.route("id-A", b"for-A".to_vec());
         broker.route("id-B", b"for-B".to_vec());

@@ -109,7 +109,16 @@ async fn handle_wt_connection(
     };
 
     let my_id = register_env.from.clone();
-    let mut broker_rx = broker.register(my_id.clone());
+    let mut broker_rx = match broker.register(my_id.clone()) {
+        Ok(rx) => rx,
+        Err(e) => {
+            tracing::warn!(
+                client_id = %my_id,
+                "WT registration rejected: {e}, closing connection"
+            );
+            return Ok(());
+        }
+    };
     tracing::info!(client_id = %my_id, "WT client registered");
 
     // Main relay loop: race inbound streams from the client against outbound messages

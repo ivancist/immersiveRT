@@ -189,10 +189,20 @@ where
                         if envelope.msg_type == "register" {
                             // Register with broker; subsequent inbound messages route via broker.
                             let id = envelope.from.clone();
-                            let rx = broker.register(id.clone());
-                            my_id = Some(id.clone());
-                            broker_rx = Some(rx);
-                            tracing::info!(client_id = %id, "WS client registered from {addr}");
+                            match broker.register(id.clone()) {
+                                Ok(rx) => {
+                                    my_id = Some(id.clone());
+                                    broker_rx = Some(rx);
+                                    tracing::info!(client_id = %id, "WS client registered from {addr}");
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        client_id = %id,
+                                        "WS registration rejected from {addr}: {e}, closing connection"
+                                    );
+                                    break;
+                                }
+                            }
                         } else if my_id.is_none() {
                             // Cannot route without an ID — drop and warn.
                             tracing::warn!(
