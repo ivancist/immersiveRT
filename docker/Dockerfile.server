@@ -38,4 +38,10 @@ EXPOSE 4433/udp
 EXPOSE 9090/tcp
 EXPOSE 8081/tcp
 
+# Run as a non-root system user — the server only needs ports >1024 (4433, 9090, 8081).
+# Any RCE vulnerability in the server will not yield a root shell or container escape.
+RUN groupadd --system immersivert \
+    && useradd --system --gid immersivert --no-create-home immersivert
+USER immersivert
+
 CMD ["immersive-rt-server"]
