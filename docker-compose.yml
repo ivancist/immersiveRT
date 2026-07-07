@@ -55,7 +55,7 @@ services:
   static-files:
     image: nginx:alpine
     ports:
-      - "8080:80"
+      - "8090:80"
     volumes:
       - ./client/dist:/usr/share/nginx/html:ro
     restart: unless-stopped
