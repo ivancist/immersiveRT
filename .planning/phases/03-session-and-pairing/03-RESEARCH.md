@@ -784,27 +784,31 @@ function renderRoomPage(slot, roomCode, pairingUrl) {
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **LAN IP in dev cert for phone testing**
    - What we know: `make dev-certs` generates for localhost/127.0.0.1/::1 only
    - What's unclear: Should Phase 3 update the Makefile to auto-detect LAN IP and include it, or leave this as a documented manual step?
    - Recommendation: Update `make dev-certs` to detect LAN IP via `ip route` and include it. This removes the most common dev friction when testing with a real phone.
+   - RESOLVED: Makefile target updated to detect LAN IP via `ip route get 1.1.1.1` — implemented in 03-03 Task 1 (nginx TLS + SPA routing).
 
 2. **BASE_URL env var for pairing URL construction**
    - What we know: Server constructs `https://host/phone?token=...` (D-13); needs to know its own hostname
    - What's unclear: Should `BASE_URL` default to `https://localhost:8443` or be required (like `TURN_SHARED_SECRET`)? For multi-machine LAN testing, the user must override it.
    - Recommendation: Required env var (no default) following the `TURN_SHARED_SECRET` precedent. Error message: "Set BASE_URL=https://<your-ip>:8443".
+   - RESOLVED: Required env var with no default — implemented in 03-02 Task 3 (server env var loading); error message "BASE_URL not set — set BASE_URL=https://<your-ip>:8443".
 
 3. **Short code format for SESS-03**
    - What we know: D-15 says "room code + slot number, or a derived short string"
    - What's unclear: Is `ABCD-2` (room_code dash slot) the right format, or a separate 6-char derived code?
    - Recommendation: `{room_code}-{slot_id}` (e.g., `ABCD23-2`). Simple, unique, human-typeable. The phone app URL would accept both token and this fallback code.
+   - RESOLVED: Format `{room_code}-{slot_id}` adopted — implemented in 03-01 Task 2 (RoomRegistry) and 03-04 Task 1 (lobby UI short code display).
 
 4. **PAIRING_TOKEN_SECRET env var management**
    - What we know: Pairing token is HMAC-signed, needs a server-side secret (D-14, Claude's discretion)
    - What's unclear: Generated at startup (random, ephemeral) or required env var (persistent across restarts)?
    - Recommendation: Required env var (32+ char random secret). Ephemeral startup-generated secrets invalidate all tokens on server restart — bad for hold-window reconnects when the server crashes and restarts. Persistent env var allows tokens to survive server restarts within TTL.
+   - RESOLVED: Required env var `PAIRING_TOKEN_SECRET` (32+ char) — implemented in 03-01 Task 1 (pairing_token.rs) and 03-02 Task 3 (main.rs env var loading).
 
 ---
 
