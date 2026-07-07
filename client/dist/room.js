@@ -177,9 +177,7 @@ function onServerMessage(msg) {
       handlePairError(msg.payload);
       break;
     case 'leave-ack':
-      // Server confirmed leave processed; safe to close WS now.
-      if (ws) { ws.close(); ws = null; }
-      connectWS(null);
+      // Slot freed on server — no action needed; WS stays open for next join.
       break;
     default:
       console.warn('[WS] Unknown message type:', msg.type);
@@ -668,14 +666,11 @@ function leaveRoom() {
   showView('view-lobby');
   showLobbyActions();
   if (ws && ws.readyState === WebSocket.OPEN) {
-    // Server will process leave-room and reply with leave-ack before closing — avoids
-    // the race where ws.close() sends FIN before the data frame, causing on_client_disconnect
-    // to fire first and start a hold timer instead of freeing the slot.
+    // Send leave-room and keep the WS open — server frees the slot immediately.
+    // Closing the WS races with the data frame (FIN can arrive before the message),
+    // triggering on_client_disconnect which starts a hold timer instead.
+    // Keeping the WS open eliminates the race; the connection is reused for the next join.
     ws.send(JSON.stringify({ type: 'leave-room', from: myId, to: '', payload: {} }));
-    // Fallback: if ack never arrives (e.g. server unreachable), close after 500ms.
-    setTimeout(function () {
-      if (ws) { ws.close(); ws = null; connectWS(null); }
-    }, 500);
   } else {
     if (ws) { ws.close(); ws = null; }
     connectWS(null);
