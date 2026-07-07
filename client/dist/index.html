@@ -4,9 +4,546 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ImmersiveRT</title>
+  <script
+    src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"
+    integrity="sha384-Izc791esqyEy3BEIC42q7jbE0AaOkACziN+dyyXgYeDmpeMCLz0xA+xYN3aCd5zz"
+    crossorigin="anonymous"
+  ></script>
+  <style>
+    /* ──────────────────────────────────────────
+       CSS Custom Properties (Design Tokens)
+    ────────────────────────────────────────── */
+    :root {
+      --color-bg:               #111111;
+      --color-surface:          #1e1e1e;
+      --color-accent:           #7c6af7;
+      --color-destructive:      #ef4444;
+      --color-text-primary:     #f0f0f0;
+      --color-text-secondary:   #888888;
+      --color-status-connected: #22c55e;
+      --color-status-hold:      #eab308;
+      --color-status-empty:     #444444;
+    }
+
+    /* ──────────────────────────────────────────
+       Base
+    ────────────────────────────────────────── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    body {
+      background: var(--color-bg);
+      color: var(--color-text-primary);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    /* ──────────────────────────────────────────
+       Typography Helpers
+    ────────────────────────────────────────── */
+    .text-secondary { color: var(--color-text-secondary); }
+    .text-destructive { color: var(--color-destructive); }
+
+    .size-label   { font-size: 13px; font-weight: 600; line-height: 1.4; }
+    .size-body    { font-size: 15px; font-weight: 400; line-height: 1.5; }
+    .size-heading { font-size: 20px; font-weight: 600; line-height: 1.2; }
+    .size-display { font-size: 28px; font-weight: 600; line-height: 1.1; }
+
+    h1, h2, h3 { margin: 0 0 8px 0; }
+    p { margin: 0 0 8px 0; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+
+    /* ──────────────────────────────────────────
+       Card
+    ────────────────────────────────────────── */
+    .card {
+      background: var(--color-surface);
+      border-radius: 8px;
+      padding: 48px;
+    }
+
+    /* ──────────────────────────────────────────
+       Buttons
+    ────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--color-accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 20px;
+      cursor: pointer;
+      min-height: 44px;
+      font-size: 15px;
+      font-family: inherit;
+      font-weight: 600;
+      transition: background 0.1s;
+      width: 100%;
+    }
+    .btn:hover  { background: #6a58e8; }
+    .btn:active { background: #5946d9; }
+    .btn:focus  { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+    .btn:disabled,
+    .btn[disabled] {
+      opacity: 0.5;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    /* ──────────────────────────────────────────
+       Inputs
+    ────────────────────────────────────────── */
+    .input {
+      display: block;
+      background: var(--color-surface);
+      border: 1px solid #444;
+      color: var(--color-text-primary);
+      border-radius: 4px;
+      padding: 8px 12px;
+      width: 100%;
+      font-size: 15px;
+      font-family: inherit;
+    }
+    .input::placeholder { color: var(--color-text-secondary); }
+    .input:focus {
+      border: 2px solid var(--color-accent);
+      outline: none;
+      padding: 7px 11px;
+    }
+    .input--error {
+      border: 2px solid var(--color-destructive);
+      padding: 7px 11px;
+    }
+
+    select.input {
+      appearance: auto;
+    }
+
+    /* ──────────────────────────────────────────
+       Error Messages
+    ────────────────────────────────────────── */
+    .error-msg {
+      color: var(--color-destructive);
+      font-size: 13px;
+      margin-top: 4px;
+      display: none;
+    }
+    .error-msg--visible { display: block; }
+
+    /* ──────────────────────────────────────────
+       Status Dots
+    ────────────────────────────────────────── */
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .dot--connected { background: var(--color-status-connected); }
+    .dot--hold      { background: var(--color-status-hold); animation: dot-pulse 1.5s ease-in-out infinite; }
+    .dot--empty     { background: var(--color-status-empty); }
+
+    /* ──────────────────────────────────────────
+       CSS Spinner
+    ────────────────────────────────────────── */
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .spinner {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      border: 3px solid #444;
+      border-top-color: var(--color-accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    /* ──────────────────────────────────────────
+       QR Wrapper — white bg for camera scannability
+    ────────────────────────────────────────── */
+    .qr-wrapper {
+      background: #ffffff;
+      padding: 8px;
+      border-radius: 4px;
+      display: inline-block;
+    }
+
+    /* ──────────────────────────────────────────
+       Monospace Display (short codes)
+    ────────────────────────────────────────── */
+    .monospace-display {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+    }
+
+    /* ──────────────────────────────────────────
+       Separator
+    ────────────────────────────────────────── */
+    .separator {
+      border: none;
+      border-top: 1px solid #333;
+      margin: 24px 0;
+    }
+
+    /* ──────────────────────────────────────────
+       Form Group
+    ────────────────────────────────────────── */
+    .form-group { margin-bottom: 16px; }
+
+    /* ──────────────────────────────────────────
+       Button Row (flex, gap)
+    ────────────────────────────────────────── */
+    .btn-row {
+      display: flex;
+      gap: 16px;
+      margin-top: 24px;
+    }
+
+    /* ──────────────────────────────────────────
+       View: Lobby
+    ────────────────────────────────────────── */
+    #view-lobby {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+    #view-lobby .lobby-card {
+      max-width: 480px;
+      width: 100%;
+    }
+    #view-lobby h1 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    #view-lobby .subtitle {
+      color: var(--color-text-secondary);
+      font-size: 15px;
+      margin-bottom: 0;
+    }
+    #view-lobby .sub-form {
+      margin-top: 24px;
+    }
+
+    /* ──────────────────────────────────────────
+       View: Room — Two-Column Layout
+    ────────────────────────────────────────── */
+    #view-room {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 32px 16px;
+    }
+    #view-room .room-header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    #view-room .room-header h2 {
+      font-size: 20px;
+      font-weight: 600;
+      margin: 0;
+    }
+    #room-title .room-code-inline {
+      font-family: "Courier New", Courier, monospace;
+    }
+    #connection-status {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+    }
+    .room-columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    @media (max-width: 767px) {
+      .room-columns {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* QR Card */
+    .qr-card {
+      background: var(--color-surface);
+      border: 2px solid var(--color-accent);
+      border-radius: 8px;
+      padding: 24px;
+    }
+    .qr-card .scan-label {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      display: block;
+    }
+    .qr-card .short-code-label {
+      font-size: 13px;
+      color: var(--color-text-secondary);
+      font-weight: 600;
+      display: block;
+      margin-bottom: 4px;
+    }
+    #short-code {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      color: var(--color-text-primary);
+      margin: 0;
+    }
+
+    /* Roster */
+    .roster-section h3,
+    .events-section h3 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    #slot-roster {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .slot-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 4px;
+    }
+    .slot-row.own-slot {
+      border-left: 3px solid var(--color-accent);
+      background: rgba(124, 106, 247, 0.08);
+      padding-left: 5px; /* compensate for 3px border */
+    }
+    .slot-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      min-width: 48px;
+    }
+    .slot-username {
+      font-size: 15px;
+      color: var(--color-text-secondary);
+    }
+    .slot-username.occupied {
+      color: var(--color-text-primary);
+    }
+
+    /* Event Log */
+    #event-log {
+      max-height: 200px;
+      overflow-y: auto;
+      background: var(--color-surface);
+      padding: 8px;
+      border-radius: 4px;
+    }
+    .event-entry {
+      font-size: 13px;
+      line-height: 1.4;
+      margin-bottom: 2px;
+    }
+    .event-ts {
+      color: var(--color-text-secondary);
+      font-weight: 600;
+      margin-right: 4px;
+    }
+
+    /* ──────────────────────────────────────────
+       View: Phone Landing
+    ────────────────────────────────────────── */
+    #view-phone {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+    #view-phone .phone-card {
+      max-width: 400px;
+      width: 100%;
+      background: var(--color-surface);
+      border-radius: 8px;
+      padding: 32px;
+      text-align: center;
+    }
+    #view-phone h2 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    #view-phone .spinner {
+      margin: 16px auto;
+      display: block;
+    }
+    #view-phone .hint {
+      font-size: 15px;
+      color: var(--color-text-secondary);
+      margin-top: 8px;
+    }
+    #view-phone .error-title {
+      color: var(--color-destructive);
+    }
+    #pair-error-msg {
+      font-size: 15px;
+      margin: 8px 0;
+    }
+    #pair-error-hint {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+    }
+
+    /* ──────────────────────────────────────────
+       Hidden utility
+    ────────────────────────────────────────── */
+    [hidden] { display: none !important; }
+  </style>
 </head>
 <body>
-  <h1>ImmersiveRT</h1>
-  <p>Client placeholder — coming in Phase 4.</p>
+
+  <!-- ──────────────────────────────────────────
+       View 1: Lobby  (/ path)
+  ────────────────────────────────────────── -->
+  <div id="view-lobby">
+    <div class="card lobby-card">
+      <h1>ImmersiveRT</h1>
+      <p class="subtitle">Create or join a room to get started.</p>
+
+      <div class="btn-row">
+        <button class="btn" id="btn-create-room">Create Room</button>
+        <button class="btn" id="btn-join-room">Join Room</button>
+      </div>
+
+      <!-- Create Room sub-form (revealed on Create Room click) -->
+      <div id="view-game-select" class="sub-form" hidden>
+        <div class="form-group">
+          <label for="game-type">Game Type</label>
+          <select id="game-type" class="input">
+            <option value="placeholder">Placeholder Game</option>
+          </select>
+        </div>
+        <button class="btn" id="btn-continue">Continue</button>
+      </div>
+
+      <!-- Join Room sub-form (revealed on Join Room click) -->
+      <div id="view-join-form" class="sub-form" hidden>
+        <div class="form-group">
+          <label for="input-room-code">Room Code</label>
+          <input
+            id="input-room-code"
+            class="input"
+            type="text"
+            placeholder="ABCD23"
+            maxlength="6"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="error-msg" id="error-room-code"></div>
+        </div>
+        <div class="form-group">
+          <label for="input-username">Username</label>
+          <input
+            id="input-username"
+            class="input"
+            type="text"
+            placeholder="Your name"
+            maxlength="64"
+            autocomplete="off"
+          />
+          <div class="error-msg" id="error-username"></div>
+        </div>
+        <button class="btn" id="btn-join-submit">Join Room</button>
+        <div class="error-msg" id="error-join" style="margin-top: 8px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ──────────────────────────────────────────
+       View 2: Room Page  (/room/{code} path)
+  ────────────────────────────────────────── -->
+  <div id="view-room" hidden>
+    <div class="room-header">
+      <h2 id="room-title">Your Room</h2>
+      <span id="connection-status">Connected</span>
+    </div>
+
+    <div class="room-columns">
+      <!-- Left Column: QR + Short Code -->
+      <div class="qr-card">
+        <span class="scan-label">Scan to pair your phone</span>
+        <div class="qr-wrapper">
+          <canvas id="pairing-qr"></canvas>
+        </div>
+        <hr class="separator" />
+        <span class="short-code-label">Or type this code on your phone:</span>
+        <p id="short-code" class="monospace-display"></p>
+      </div>
+
+      <!-- Right Column: Roster + Events -->
+      <div>
+        <div class="roster-section">
+          <h3>Players</h3>
+          <ul id="slot-roster"></ul>
+        </div>
+        <hr class="separator" />
+        <div class="events-section">
+          <h3>Room Events</h3>
+          <div id="event-log"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ──────────────────────────────────────────
+       View 3: Phone Landing  (/phone?token=... path)
+  ────────────────────────────────────────── -->
+  <div id="view-phone" hidden>
+    <div class="phone-card">
+
+      <!-- Pairing in progress (initial state) -->
+      <div id="pairing-state">
+        <h2>Pairing your phone...</h2>
+        <div class="spinner"></div>
+        <p class="hint">Keep this page open.</p>
+      </div>
+
+      <!-- Success state (pair-ack received) -->
+      <div id="success-state" hidden>
+        <h2>Paired successfully.</h2>
+        <p class="hint">Phone app coming in Phase 4. Keep this tab open.</p>
+      </div>
+
+      <!-- Error state (pair-error or no token) -->
+      <div id="error-state" hidden>
+        <h2 class="error-title">Pairing failed</h2>
+        <p id="pair-error-msg"></p>
+        <p id="pair-error-hint" class="size-label text-secondary">Go back and scan the QR code again.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="room.js"></script>
 </body>
 </html>
