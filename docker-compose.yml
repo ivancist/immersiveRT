@@ -2,7 +2,8 @@
 #
 # Usage:
 #   cp .env.example .env && $EDITOR .env   # fill in real secrets
-#   docker compose up --build
+#   make dev-certs                          # generate certs + fix permissions (run once)
+#   make up                                 # start the full stack
 #
 # Services:
 #   server      — Rust WebTransport + WebSocket signaling server
