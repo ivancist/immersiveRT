@@ -37,6 +37,11 @@ services:
       - HTTP_PORT=${HTTP_PORT}
       - TURN_SHARED_SECRET=${TURN_SHARED_SECRET}
       - API_TOKEN=${API_TOKEN}
+      - PAIRING_TOKEN_SECRET=${PAIRING_TOKEN_SECRET}
+      # BASE_URL is the public HTTPS origin for pairing URLs embedded in QR codes.
+      # Set BASE_URL=https://<your-LAN-IP>:8443 for phone testing (RESEARCH.md Pitfall 3).
+      # Never use http:// — iOS/Android camera apps will NOT auto-open HTTP links.
+      - BASE_URL=${BASE_URL}
     volumes:
       - ./certs:/certs:ro
     depends_on:
@@ -67,6 +72,9 @@ services:
     image: nginx:alpine
     ports:
       - "8090:80"
+      - "8443:443"       # HTTPS — required for camera-app QR auto-open (D-13, RESEARCH.md Pitfall 5)
     volumes:
       - ./client/dist:/usr/share/nginx/html:ro
+      - ./docker/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/certs:ro   # same mkcert certs as the Rust server (T-03-08: mounted read-only, not under document root)
     restart: unless-stopped
