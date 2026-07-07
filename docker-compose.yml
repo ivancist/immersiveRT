@@ -44,13 +44,17 @@ services:
     # Do NOT add a ports: block here — it is silently ignored in host mode and
     # creates false confidence that ports are being mapped. (RESEARCH.md Pitfall 2)
     network_mode: "host"
+    environment:
+      # TURN_SHARED_SECRET is injected via env var rather than --static-auth-secret
+      # CLI arg, to keep it out of `ps aux`, `docker inspect`, and /proc/<pid>/cmdline.
+      # The entrypoint script writes it into the config at startup.
+      - TURN_SHARED_SECRET=${TURN_SHARED_SECRET}
     volumes:
       - ./docker/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./docker/coturn/docker-entrypoint.sh:/docker-entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
     command:
-      - "-c"
-      - "/etc/coturn/turnserver.conf"
       - "--external-ip=${COTURN_EXTERNAL_IP}"
-      - "--static-auth-secret=${TURN_SHARED_SECRET}"
     restart: unless-stopped
 
   static-files:
