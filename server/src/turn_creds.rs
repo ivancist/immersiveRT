@@ -1,14 +1,14 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use hmac::{Hmac, KeyInit, Mac};
+use serde::Serialize;
 use sha1::Sha1;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[allow(dead_code)]
 type HmacSha1 = Hmac<Sha1>;
 
 /// Ephemeral TURN credentials generated via coturn's `use-auth-secret` REST API
 /// mechanism (INFRA-04, D-06).
-#[allow(dead_code)]
+#[derive(Serialize)]
 pub struct TurnCredentials {
     /// `"{expiry}:{userid}"` — expiry is Unix seconds when these credentials
     /// expire (NOT the issue time — see Pitfall 1 in RESEARCH.md).
@@ -24,7 +24,6 @@ pub struct TurnCredentials {
 ///
 /// `expiry = now_unix_seconds + ttl_seconds` is embedded in `username` so coturn
 /// can verify freshness.  `password = base64(HMAC-SHA1(shared_secret, username))`.
-#[allow(dead_code)]
 pub fn generate_turn_credentials(
     shared_secret: &str,
     userid: &str,
