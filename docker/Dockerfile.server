@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+# Multi-stage build: rust:1-slim builder → debian:bookworm-slim runtime
+# Build context is the repo root: docker build -f docker/Dockerfile.server .
+
+# ─── Stage 1: builder ────────────────────────────────────────────────────────
+FROM rust:1-slim AS builder
+
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy workspace Cargo manifests first — Docker layer-caches the dependency
+# compilation separately from source changes.
+COPY Cargo.toml Cargo.lock ./
+COPY server/Cargo.toml server/Cargo.toml
+
+# Compile all dependencies with a stub binary so that source-only edits
+# do not require a full dependency rebuild.
+RUN mkdir -p server/src && echo 'fn main(){}' > server/src/main.rs \
+    && cargo build --release -p immersive-rt-server \
+    && rm -f target/release/deps/immersive_rt_server*
+
+# Copy the actual source and build the real binary.
+COPY server/src server/src
+RUN cargo build --release -p immersive-rt-server
+
+# ─── Stage 2: runtime ────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/target/release/immersive-rt-server /usr/local/bin/immersive-rt-server
+
+# Certs are bind-mounted at runtime (./certs:/certs:ro in docker-compose.yml).
+# Do NOT COPY certs into the image — they must not be baked in.
+
+EXPOSE 4433/udp
+EXPOSE 9090/tcp
+EXPOSE 8081/tcp
+
+CMD ["immersive-rt-server"]
