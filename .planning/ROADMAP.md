@@ -66,7 +66,7 @@ Plans:
   4. A TURN credential request to the server endpoint returns ephemeral username+password that coturn accepts — credentials are generated at connection-start, not cached from page load
   5. A phone behind symmetric NAT (simulated with coturn relay-only mode) still establishes a data channel to the desktop via TURN relay
 
-**Plans**: 3/5 plans executed
+**Plans**: 4/5 plans executed
 
 Plans:
 **Wave 1**
@@ -80,7 +80,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-04-PLAN.md — TURN credential HTTP endpoint via axum on HTTP_PORT (Wave 3)
+- [x] 02-04-PLAN.md — TURN credential HTTP endpoint via axum on HTTP_PORT (Wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -193,7 +193,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Server and Transport Foundation | 3/3 | Complete    | 2026-07-06 |
-| 2. Signaling, TURN, and Deployment | 3/5 | In Progress|  |
+| 2. Signaling, TURN, and Deployment | 4/5 | In Progress|  |
 | 3. Session and Pairing | 0/TBD | Not started | - |
 | 4. Phone Bootstrap and WebRTC Channels | 0/TBD | Not started | - |
 | 5. Sensor Fusion and Packet Encoding | 0/TBD | Not started | - |

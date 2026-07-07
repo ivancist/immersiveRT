@@ -6,14 +6,14 @@ current_phase: 02
 current_phase_name: signaling-turn-and-deployment
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-07-07T02:37:20.675Z"
+last_updated: "2026-07-07T02:46:57.290Z"
 last_activity: 2026-07-06
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 8
-  completed_plans: 6
+  completed_plans: 7
   percent: 13
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-06)
 ## Current Position
 
 Phase: 02 (signaling-turn-and-deployment) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-07-06 — Phase 02 execution started
 
@@ -64,6 +64,7 @@ Progress: [███████░░░] 67%
 | Phase 01 P03 | 1 | 3 tasks | 3 files |
 | Phase 02 P01 | 9 | 2 tasks | 5 files |
 | Phase 02 P03 | 6 min | 3 tasks | 7 files |
+| Phase 02 P04 | 4 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,8 @@ Recent decisions affecting current work:
 - Phase 2 Plan 01: TURN credential expiry = now + ttl_seconds (never now alone) — coturn treats username timestamp as expiry not issue time (Pitfall 1)
 - [Phase ?]: coturn no ports: block in host mode
 - [Phase ?]: static-auth-secret via CLI arg not turnserver.conf (T-02-07)
+- [Phase ?]: axum io::Error mapped to anyhow::Error for try_join! unification
+- [Phase ?]: userid=anonymous placeholder for Phase 2; Phase 4 supplies real client session ID
 
 ### Pending Todos
 
@@ -111,6 +114,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-07T02:37:04.502Z
+Last session: 2026-07-07T02:46:29.840Z
 Stopped at: Plan 02-01 complete — broker, signaling, turn_creds modules implemented
 Resume file: .planning/phases/02-signaling-turn-and-deployment/02-02-PLAN.md
