@@ -5,8 +5,8 @@ milestone_name: milestone
 current_phase: 4
 current_phase_name: Phone Bootstrap and WebRTC Channels
 status: completed
-stopped_at: Phase 4 context gathered
-last_updated: "2026-07-07T22:36:50.792Z"
+stopped_at: Phase 4 UI-SPEC approved
+last_updated: "2026-07-07T22:43:31.914Z"
 last_activity: 2026-07-07
 progress:
   total_phases: 8
@@ -125,6 +125,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-07T22:36:50.788Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-phone-bootstrap-and-webrtc-channels/04-CONTEXT.md
+Last session: 2026-07-07T22:43:31.911Z
+Stopped at: Phase 4 UI-SPEC approved
+Resume file: .planning/phases/04-phone-bootstrap-and-webrtc-channels/04-UI-SPEC.md
