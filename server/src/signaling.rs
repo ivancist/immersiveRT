@@ -26,6 +26,63 @@ pub fn parse_envelope(bytes: &[u8]) -> Option<SignalingEnvelope> {
     serde_json::from_slice(bytes).ok()
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3: typed payload structs for room-aware message types (D-10, SESS-01)
+// ---------------------------------------------------------------------------
+
+/// Typed payload for `join-room` messages (D-10).
+///
+/// Sent by the desktop client to join or create a room.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JoinRoomPayload {
+    pub username: String,
+    /// Empty string means create a new room (D-04).
+    pub room_code: String,
+    pub game_type: String,
+}
+
+/// Typed payload for `join-ack` responses sent back to the joining desktop (D-10).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JoinAckPayload {
+    pub slot: u8,
+    pub room_code: String,
+    pub reconnect_token: String,
+    pub pairing_url: String,
+}
+
+/// Typed payload for `join-error` responses (D-10).
+///
+/// Reason values: `"room_full"` | `"room_not_found"` | `"invalid_payload"` | `"invalid_username"`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JoinErrorPayload {
+    pub reason: String,
+}
+
+/// Typed payload for `room-event` broadcasts to all desktops in the room (D-22, SESS-06).
+///
+/// Event values: `"player-joined"` | `"player-disconnected"` | `"player-left"` |
+/// `"player-reconnected"` | `"room-full"`.
+/// `"player-disconnected"` indicates hold-started state (D-21).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RoomEventPayload {
+    pub event: String,
+    pub slot: u8,
+    pub username: String,
+}
+
+/// Typed payload for `pair` messages sent by phone clients.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PairPayload {
+    pub token: String,
+}
+
+/// Typed payload for `pair-ack` responses sent back to the phone client.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PairAckPayload {
+    /// The `client_id` of the desktop that owns this slot.
+    pub desktop_id: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
