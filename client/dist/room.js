@@ -383,6 +383,19 @@ function handleJoinAck(payload) {
 }
 
 function handleJoinError(reason) {
+  // Reconnect failure while on room page — session expired or room gone.
+  if (currentRoom || reason === 'invalid_token') {
+    sessionStorage.removeItem('reconnect_token');
+    sessionStorage.removeItem('room_code');
+    sessionStorage.removeItem('my_slot');
+    currentRoom = null;
+    history.replaceState(null, '', '/');
+    showView('view-lobby');
+    showLobbyActions();
+    showError('error-join', 'Session expired. Please join or create a new room.');
+    return;
+  }
+
   enableButton('btn-continue', 'Continue');
   enableButton('btn-join-submit', 'Join Room');
 
@@ -654,6 +667,11 @@ function showSubForm(form) {
   if (lobbyActions) { lobbyActions.hidden = true; }
   if (gameSelect)   { gameSelect.hidden = true; }
   if (joinForm)     { joinForm.hidden = true; }
+  // Clear stale errors from previous attempts
+  clearError('error-join');
+  clearError('error-room-code');
+  clearError('error-username');
+  clearError('error-create-username');
   if (form)         { form.hidden = false; }
 }
 
