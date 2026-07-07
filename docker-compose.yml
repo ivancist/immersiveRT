@@ -1,0 +1,61 @@
+# ImmersiveRT — 3-service Docker Compose stack
+#
+# Usage:
+#   cp .env.example .env && $EDITOR .env   # fill in real secrets
+#   docker compose up --build
+#
+# Services:
+#   server      — Rust WebTransport + WebSocket signaling server
+#   coturn      — STUN/TURN server (network_mode: host — required, see NOTE below)
+#   static-files — nginx serving the desktop game client
+#
+# NOTE: coturn uses network_mode: host and has NO ports: block.
+# In host-network mode Docker ignores any ports: mapping; bind addresses and
+# ports are controlled entirely by turnserver.conf and the --external-ip /
+# --static-auth-secret command-line arguments below. (RESEARCH.md Pitfall 2)
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    ports:
+      - "4433:4433/udp"   # WebTransport (QUIC/HTTP3)
+      - "9090:9090/tcp"   # WebSocket(S) signaling fallback
+      - "8081:8081/tcp"   # TURN credential HTTP endpoint
+    environment:
+      - CERT_PATH=${CERT_PATH}
+      - KEY_PATH=${KEY_PATH}
+      - WT_PORT=${WT_PORT}
+      - WS_PORT=${WS_PORT}
+      - HTTP_PORT=${HTTP_PORT}
+      - TURN_SHARED_SECRET=${TURN_SHARED_SECRET}
+    volumes:
+      - ./certs:/certs:ro
+    depends_on:
+      - coturn
+    restart: unless-stopped
+
+  coturn:
+    image: coturn/coturn:4.6
+    # REQUIRED: network_mode host lets coturn bind directly to host interfaces.
+    # Bridge-mode Docker networking breaks NAT reflection for STUN (STATE.md D-07).
+    # Do NOT add a ports: block here — it is silently ignored in host mode and
+    # creates false confidence that ports are being mapped. (RESEARCH.md Pitfall 2)
+    network_mode: "host"
+    volumes:
+      - ./docker/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command:
+      - "-c"
+      - "/etc/coturn/turnserver.conf"
+      - "--external-ip=${COTURN_EXTERNAL_IP}"
+      - "--static-auth-secret=${TURN_SHARED_SECRET}"
+    restart: unless-stopped
+
+  static-files:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./client/dist:/usr/share/nginx/html:ro
+    restart: unless-stopped
