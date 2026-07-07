@@ -10,19 +10,39 @@ use axum::{extract::State, routing::get, Json, Router};
 /// Shared application state injected into the axum HTTP handler.
 struct AppState {
     turn_shared_secret: String,
+    /// Bearer token that callers must supply in the Authorization header to
+    /// receive TURN credentials. Set via the API_TOKEN environment variable.
+    api_token: String,
 }
 
 /// GET /turn-credentials — returns ephemeral TURN credentials for coturn's
 /// use-auth-secret REST API mechanism (INFRA-04, D-06).
 ///
-/// Credentials are generated fresh on every request (not cached); the username
-/// encodes the expiry timestamp so each call returns a distinct value.
+/// Requires `Authorization: Bearer <API_TOKEN>` — any unauthenticated request
+/// receives 401. Credentials are generated fresh on every request (not cached);
+/// the username encodes the expiry timestamp so each call returns a distinct value.
 async fn turn_creds_handler(
+    headers: axum::http::HeaderMap,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<turn_creds::TurnCredentials>, String> {
+) -> Result<Json<turn_creds::TurnCredentials>, (axum::http::StatusCode, String)> {
+    let token = headers
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                "Missing Authorization header".into(),
+            )
+        })?;
+    if token != format!("Bearer {}", state.api_token) {
+        return Err((
+            axum::http::StatusCode::UNAUTHORIZED,
+            "Invalid token".into(),
+        ));
+    }
     turn_creds::generate_turn_credentials(&state.turn_shared_secret, "anonymous", 300)
         .map(Json)
-        .map_err(|e| e.to_string())
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 #[tokio::main]
@@ -55,6 +75,12 @@ async fn main() -> anyhow::Result<()> {
             "TURN_SHARED_SECRET environment variable not set — \
              generate a random 32-char secret and set it before starting the server"
         ))?;
+    // API_TOKEN gates the /turn-credentials endpoint. Required — refuse to start without it.
+    let api_token = std::env::var("API_TOKEN")
+        .map_err(|_| anyhow::anyhow!(
+            "API_TOKEN environment variable not set — \
+             generate a random token and set it before starting the server"
+        ))?;
     let http_port: u16 = std::env::var("HTTP_PORT")
         .unwrap_or_else(|_| "8081".into())
         .parse()
@@ -67,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
     let broker = Arc::new(broker::SignalingBroker::new());
 
     // Axum HTTP state — Arc-wrapped so the handler can clone the secret reference.
-    let app_state = Arc::new(AppState { turn_shared_secret });
+    let app_state = Arc::new(AppState { turn_shared_secret, api_token });
     let http_app = Router::new()
         .route("/turn-credentials", get(turn_creds_handler))
         .with_state(app_state);
@@ -95,9 +121,15 @@ mod tests {
     async fn test_turn_creds_handler_unit() {
         let state = AppState {
             turn_shared_secret: "test-secret".to_string(),
+            api_token: "test-token".to_string(),
         };
-        let result = turn_creds_handler(State(Arc::new(state))).await;
-        let Json(creds) = result.expect("handler should succeed");
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer test-token"),
+        );
+        let result = turn_creds_handler(headers, State(Arc::new(state))).await;
+        let Json(creds) = result.expect("handler should succeed with valid token");
         assert!(
             creds.username.contains(':'),
             "username should contain ':' separator, got: {}",
@@ -105,5 +137,34 @@ mod tests {
         );
         assert!(!creds.password.is_empty(), "password should be non-empty");
         assert_eq!(creds.ttl_seconds, 300);
+    }
+
+    /// Requests without Authorization header must receive 401.
+    #[tokio::test]
+    async fn test_turn_creds_handler_rejects_missing_auth() {
+        let state = AppState {
+            turn_shared_secret: "test-secret".to_string(),
+            api_token: "test-token".to_string(),
+        };
+        let result = turn_creds_handler(axum::http::HeaderMap::new(), State(Arc::new(state))).await;
+        let err = result.expect_err("handler should fail without auth");
+        assert_eq!(err.0, axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// Requests with wrong token must receive 401.
+    #[tokio::test]
+    async fn test_turn_creds_handler_rejects_wrong_token() {
+        let state = AppState {
+            turn_shared_secret: "test-secret".to_string(),
+            api_token: "test-token".to_string(),
+        };
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer wrong-token"),
+        );
+        let result = turn_creds_handler(headers, State(Arc::new(state))).await;
+        let err = result.expect_err("handler should fail with wrong token");
+        assert_eq!(err.0, axum::http::StatusCode::UNAUTHORIZED);
     }
 }

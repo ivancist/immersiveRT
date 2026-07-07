@@ -30,6 +30,7 @@ services:
       - WS_PORT=${WS_PORT}
       - HTTP_PORT=${HTTP_PORT}
       - TURN_SHARED_SECRET=${TURN_SHARED_SECRET}
+      - API_TOKEN=${API_TOKEN}
     volumes:
       - ./certs:/certs:ro
     depends_on:
