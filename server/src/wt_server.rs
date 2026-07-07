@@ -238,14 +238,19 @@ async fn handle_wt_connection(
                         // Open a new bidirectional stream to push the message to the client.
                         // wtransport::Connection::open_bi() returns Result<OpeningBiStream, _>;
                         // OpeningBiStream must be awaited a second time to get (SendStream, RecvStream).
+                        // Failures to open a stream indicate the connection is broken.
+                        // Break the relay loop instead of continuing — a `continue` after
+                        // a stream open failure implies the connection is still usable, but
+                        // the evidence shows otherwise. WebRTC offer/answer/ICE messages are
+                        // not retried by the browser, so silent drops break peer negotiation.
                         let opening = match conn.open_bi().await {
                             Ok(o) => o,
                             Err(e) => {
                                 tracing::warn!(
                                     client_id = %my_id,
-                                    "WT open_bi failed for push: {e}"
+                                    "WT open_bi failed for push: {e}, closing connection"
                                 );
-                                continue;
+                                break;
                             }
                         };
                         match opening.await {
@@ -253,22 +258,24 @@ async fn handle_wt_connection(
                                 if let Err(e) = send.write_all(&payload).await {
                                     tracing::warn!(
                                         client_id = %my_id,
-                                        "WT write_all failed for push: {e}"
+                                        "WT write_all failed for push: {e}, closing connection"
                                     );
-                                    continue;
+                                    break;
                                 }
                                 if let Err(e) = send.finish().await {
                                     tracing::warn!(
                                         client_id = %my_id,
                                         "WT finish failed for push: {e}"
                                     );
+                                    // finish() failure is non-fatal — the data was written
                                 }
                             }
                             Err(e) => {
                                 tracing::warn!(
                                     client_id = %my_id,
-                                    "WT stream open failed for push: {e}"
+                                    "WT stream open failed for push: {e}, closing connection"
                                 );
+                                break;
                             }
                         }
                     }
