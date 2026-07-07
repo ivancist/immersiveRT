@@ -31,8 +31,10 @@ async fn test_ws_echo() {
     .await
     .expect("register send failed");
 
-    // Yield to let the server process the registration before sending.
-    tokio::task::yield_now().await;
+    // Sleep to let the server process the registration before sending.
+    // yield_now() is not a reliable barrier — a single scheduler yield does not
+    // guarantee the server task runs to completion before the next send.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Send an offer to ourselves — the broker routes it back to the same connection.
     let offer_msg = r#"{"type":"offer","from":"echo-client","to":"echo-client","payload":{}}"#;

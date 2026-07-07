@@ -47,8 +47,10 @@ async fn test_broker_relay_ws() {
     .await
     .expect("client B register send failed");
 
-    // Allow a brief yield for both registrations to be processed by the server.
-    tokio::task::yield_now().await;
+    // Allow time for both registrations to be processed by the server.
+    // yield_now() is not a reliable barrier — a single scheduler yield does not
+    // guarantee the server task runs to completion before the next send.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Client A sends an offer to desktop-1.
     ws_a.send(Message::Text(
