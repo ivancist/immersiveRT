@@ -76,7 +76,8 @@ pub async fn run_with_listener(
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
-                let permit = sem.clone().acquire_owned().await.unwrap();
+                let permit = sem.clone().acquire_owned().await
+                    .expect("WS connection semaphore was unexpectedly closed");
                 let broker = broker.clone();
                 let tls = tls.clone();
                 tokio::spawn(async move {
