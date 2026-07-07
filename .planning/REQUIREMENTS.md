@@ -12,8 +12,8 @@
 - [x] **INFRA-03**: Server brokers WebRTC signaling between desktop and all other desktops in the same room
 - [x] **INFRA-04**: Server provides a TURN credential endpoint that generates ephemeral credentials at connection-start (not page load)
 - [x] **INFRA-05**: Server provides a WebSocket signaling fallback path for networks where QUIC/UDP is blocked
-- [ ] **INFRA-06**: coturn STUN/TURN server runs in Docker with `network_mode: host` and `external-ip` configured
-- [ ] **INFRA-07**: Full stack deployable with a single `docker compose up` (Rust server + coturn + static file server)
+- [x] **INFRA-06**: coturn STUN/TURN server runs in Docker with `network_mode: host` and `external-ip` configured
+- [x] **INFRA-07**: Full stack deployable with a single `docker compose up` (Rust server + coturn + static file server)
 
 ### Session
 
@@ -115,8 +115,8 @@
 | INFRA-02 | Phase 2 | Complete |
 | INFRA-03 | Phase 2 | Complete |
 | INFRA-04 | Phase 2 | Complete |
-| INFRA-06 | Phase 2 | Pending |
-| INFRA-07 | Phase 2 | Pending |
+| INFRA-06 | Phase 2 | Complete |
+| INFRA-07 | Phase 2 | Complete |
 | SESS-01 | Phase 3 | Pending |
 | SESS-02 | Phase 3 | Pending |
 | SESS-03 | Phase 3 | Pending |
