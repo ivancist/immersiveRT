@@ -1,10 +1,14 @@
 use anyhow::Context;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 use wtransport::endpoint::IncomingSession;
 use wtransport::{Endpoint, Identity, ServerConfig};
 
 use crate::broker::SignalingBroker;
 use crate::signaling::parse_envelope;
+
+/// Maximum number of simultaneous WebTransport connections (mirrors ws_server.rs).
+const MAX_WT_CONNECTIONS: usize = 1024;
 
 /// Run the WebTransport listener.
 ///
@@ -29,10 +33,15 @@ pub async fn run(
     let server = Endpoint::server(config)?;
     tracing::info!("WebTransport listening on :{}", port);
 
+    let sem = Arc::new(Semaphore::new(MAX_WT_CONNECTIONS));
+
     loop {
         let incoming = server.accept().await;
         let broker = broker.clone();
+        let permit = sem.clone().acquire_owned().await
+            .expect("WT connection semaphore was unexpectedly closed");
         tokio::spawn(async move {
+            let _permit = permit; // Released when the connection task exits
             if let Err(e) = handle_wt_connection(incoming, broker).await {
                 tracing::error!("WT connection error: {e:#}");
             }
