@@ -1,3 +1,4 @@
 certs/
 target/
 .env
+.planning/research/.cache/

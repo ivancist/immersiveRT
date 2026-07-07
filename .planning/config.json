@@ -88,5 +88,12 @@
   },
   "resolve_model_ids": "omit",
   "mode": "yolo",
-  "granularity": "fine"
+  "granularity": "fine",
+  "model_policy": {
+    "provider": "anthropic",
+    "high": "claude-sonnet-5",
+    "medium": "claude-sonnet-5",
+    "low": "claude-haiku-4-5-20251001",
+    "budget": "medium"
+  }
 }

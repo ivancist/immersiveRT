@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Server and Transport Foundation** - Rust WebTransport server binary, mkcert TLS for dev, WebSocket signaling fallback, verified end-to-end QUIC connection (completed 2026-07-06)
 - [x] **Phase 2: Signaling, TURN, and Deployment** - WebRTC ICE signaling broker, coturn with host networking, ephemeral TURN credentials, full Docker Compose stack (completed 2026-07-07)
-- [ ] **Phase 3: Session and Pairing** - Room join, QR code + short code pairing, slot assignment, reconnect hold, 2-8 player support, room lifecycle events
+- [x] **Phase 3: Session and Pairing** - Room join, QR code + short code pairing, slot assignment, reconnect hold, 2-8 player support, room lifecycle events (completed 2026-07-07)
 - [ ] **Phase 4: Phone Bootstrap and WebRTC Channels** - Phone web app delivery, iOS DeviceMotion permission gate, Wake Lock, heartbeat, unreliable data channels to all desktops
 - [ ] **Phase 5: Sensor Fusion and Packet Encoding** - On-device Madgwick, adaptive ZUPT, Kalman dead-reckoning, gesture displacement, touch capture, 40-byte binary packet at 60Hz
 - [ ] **Phase 6: Desktop Receive, Decode, and Rendering** - WebTransport desktop connection, WebRTC peer accept from all phones, binary decode, sequence-drop, target-state store, Three.js slerp loop
@@ -114,7 +114,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 03-04-PLAN.md — client/dist/index.html + room.js (lobby, room page, phone landing SPA) + human verification checkpoint
+- [x] 03-04-PLAN.md — client/dist/index.html + room.js (lobby, room page, phone landing SPA) + human verification checkpoint
 
 ### Phase 4: Phone Bootstrap and WebRTC Channels
 
@@ -208,7 +208,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 |-------|----------------|--------|-----------|
 | 1. Server and Transport Foundation | 3/3 | Complete    | 2026-07-06 |
 | 2. Signaling, TURN, and Deployment | 4/5 | In Progress|  |
-| 3. Session and Pairing | 3/4 | In Progress|  |
+| 3. Session and Pairing | 4/4 | Complete    | 2026-07-07 |
 | 4. Phone Bootstrap and WebRTC Channels | 0/TBD | Not started | - |
 | 5. Sensor Fusion and Packet Encoding | 0/TBD | Not started | - |
 | 6. Desktop Receive, Decode, and Rendering | 0/TBD | Not started | - |
