@@ -6,21 +6,24 @@ mod wt_server;
 mod ws_server;
 
 use std::sync::Arc;
-use axum::{extract::State, Json};
+use axum::{extract::State, routing::get, Json, Router};
 
+/// Shared application state injected into the axum HTTP handler.
 struct AppState {
     turn_shared_secret: String,
 }
 
 /// GET /turn-credentials — returns ephemeral TURN credentials for coturn's
 /// use-auth-secret REST API mechanism (INFRA-04, D-06).
-/// RED stub — returns Err until GREEN implementation replaces it.
-#[allow(dead_code)]
+///
+/// Credentials are generated fresh on every request (not cached); the username
+/// encodes the expiry timestamp so each call returns a distinct value.
 async fn turn_creds_handler(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<turn_creds::TurnCredentials>, String> {
-    let _ = &state.turn_shared_secret;
-    Err("not implemented".to_string())
+    turn_creds::generate_turn_credentials(&state.turn_shared_secret, "anonymous", 300)
+        .map(Json)
+        .map_err(|e| e.to_string())
 }
 
 #[tokio::main]
@@ -46,16 +49,38 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "9090".into())
         .parse()
         .map_err(|e| anyhow::anyhow!("WS_PORT must be a valid u16 port number: {e}"))?;
+    // INFRA-04: TURN_SHARED_SECRET is a required env var — server refuses to start
+    // without it. No default, no .unwrap_or_else. Error message includes remediation.
+    let turn_shared_secret = std::env::var("TURN_SHARED_SECRET")
+        .map_err(|_| anyhow::anyhow!(
+            "TURN_SHARED_SECRET environment variable not set — \
+             generate a random 32-char secret and set it before starting the server"
+        ))?;
+    let http_port: u16 = std::env::var("HTTP_PORT")
+        .unwrap_or_else(|_| "8081".into())
+        .parse()
+        .map_err(|e| anyhow::anyhow!("HTTP_PORT must be a valid u16 port number: {e}"))?;
 
-    tracing::info!(cert_path, key_path, wt_port, ws_port, "Server starting");
+    tracing::info!(cert_path, key_path, wt_port, ws_port, http_port, "Server starting");
 
-    // Shared in-process signaling broker — both listeners receive a cloned handle
-    // pointing to the same DashMap (D-03).
+    // Shared in-process signaling broker — both WT and WS listeners receive a
+    // cloned handle pointing to the same DashMap (D-03).
     let broker = Arc::new(broker::SignalingBroker::new());
 
+    // Axum HTTP state — Arc-wrapped so the handler can clone the secret reference.
+    let app_state = Arc::new(AppState { turn_shared_secret });
+    let http_app = Router::new()
+        .route("/turn-credentials", get(turn_creds_handler))
+        .with_state(app_state);
+    let http_listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", http_port)).await?;
+    tracing::info!(http_port, "TURN credential endpoint listening on :{}", http_port);
+
+    // Run all three servers concurrently; stop if any one exits or errors.
+    // The axum serve future returns io::Error; map to anyhow to unify error types.
     tokio::try_join!(
         wt_server::run(&cert_path, &key_path, wt_port, broker.clone()),
         ws_server::run(ws_port, broker.clone(), &cert_path, &key_path),
+        async { axum::serve(http_listener, http_app).await.map_err(anyhow::Error::from) },
     )?;
 
     Ok(())
@@ -66,8 +91,7 @@ mod tests {
     use super::*;
 
     /// Unit test for the TURN credential handler — calls the handler directly without
-    /// starting an HTTP server (INFRA-04). RED: panics on .expect() because the stub
-    /// returns Err("not implemented").
+    /// starting an HTTP server (INFRA-04). No network, no certs, no env vars needed.
     #[tokio::test]
     async fn test_turn_creds_handler_unit() {
         let state = AppState {
