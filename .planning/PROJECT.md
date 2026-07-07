@@ -12,7 +12,12 @@ Phone motion feels physically immediate on screen — sub-20ms sensor delivery f
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ SESS-01: Desktop enters username, server assigns named slot + room code visible on screen — Phase 3
+- ✓ SESS-02: Phone scans QR / enters short code, pairs exclusively; second pair attempt rejected — Phase 3
+- ✓ SESS-03: Up to 8 desktops join same room; 9th join rejected (room_full) — Phase 3
+- ✓ SESS-04: Disconnect + reconnect within 60s reclaims same slot and playerId — Phase 3
+- ✓ SESS-05: Room lifecycle events (player-joined, player-left, player-reconnected, room-full) visible in event log — Phase 3
+- ✓ SESS-06: Leave Room resets SPA state without page reload; lobby immediately re-usable — Phase 3
 
 ### Active
 
@@ -97,12 +102,17 @@ Phone motion feels physically immediate on screen — sub-20ms sensor delivery f
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Rust for WebTransport server | Lowest latency for hot path, `wtransport` crate mature, tokio handles async I/O without GC pauses | — Pending |
-| WebRTC unreliable data channel for IMU | Only UDP-like transport available in browser; drop stale sensor packets rather than queue them | — Pending |
-| On-device Madgwick filter | Orientation fusion on phone reduces server processing, cuts one round-trip from the critical path | — Pending |
-| coturn for TURN | De-facto standard, RFC 5766 compliant, Docker image available, well-understood operationally | — Pending |
-| Binary sensor encoding (MessagePack) | JSON overhead at 60Hz × N players is significant; compact binary cuts packet size ~4× | — Pending |
-| TypeScript SDK | Three.js ecosystem is TypeScript-first; type safety prevents misuse of orientation vs position data | — Pending |
+| Rust for WebTransport server | Lowest latency for hot path, `wtransport` crate mature, tokio handles async I/O without GC pauses | Validated Phase 1 |
+| WebRTC unreliable data channel for IMU | Only UDP-like transport available in browser; drop stale sensor packets rather than queue them | — Pending Phase 4 |
+| On-device Madgwick filter | Orientation fusion on phone reduces server processing, cuts one round-trip from the critical path | — Pending Phase 5 |
+| coturn for TURN | De-facto standard, RFC 5766 compliant, Docker image available, well-understood operationally | Validated Phase 2 |
+| Binary sensor encoding (MessagePack) | JSON overhead at 60Hz × N players is significant; compact binary cuts packet size ~4× | — Pending Phase 5 |
+| TypeScript SDK | Three.js ecosystem is TypeScript-first; type safety prevents misuse of orientation vs position data | — Pending Phase 7 |
+| HMAC-SHA256 single-use pairing tokens | Stateless self-validating tokens with constant-time verify; avoids DB lookup on hot pair path | Validated Phase 3 |
+| Reconnect tokens opaque 32-byte random (server-side) | DashMap lookup avoids JWT complexity; token never leaves server except in join-ack | Validated Phase 3 |
+| SPA pushState only inside server-confirmed ack | Client never navigates speculatively; URL reflects server truth, not form submission | Validated Phase 3 |
+| Immediate slot release on voluntary leave | 60s hold timer only for disconnects, not explicit leave — prevents slot starvation | Validated Phase 3 |
+| Keep WS open after leaveRoom (no FIN) | Closing WS causes FIN/data race when server sends leave-ack; warm re-connection avoids race | Validated Phase 3 |
 
 ## Evolution
 
@@ -122,4 +132,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-06 after initialization*
+*Last updated: 2026-07-07 after Phase 3*
