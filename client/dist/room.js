@@ -186,13 +186,7 @@ function onServerMessage(msg) {
 // ──────────────────────────────────────────────────────────────────────────────
 function initDesktopPage() {
   // Pre-warm WS connection (D-11)
-  connectWS(function () {
-    // Check for reconnect token after WS is open
-    var token = sessionStorage.getItem('reconnect_token');
-    if (token) {
-      sendReconnect();
-    }
-  });
+  connectWS(null);
 
   // Button wiring
   var btnCreate    = document.getElementById('btn-create-room');
@@ -204,19 +198,6 @@ function initDesktopPage() {
   var lobbyActions = document.getElementById('lobby-actions');
   var gameSelect   = document.getElementById('view-game-select');
   var joinForm     = document.getElementById('view-join-form');
-
-  function showSubForm(form) {
-    if (lobbyActions) { lobbyActions.hidden = true; }
-    if (gameSelect)   { gameSelect.hidden = true; }
-    if (joinForm)     { joinForm.hidden = true; }
-    if (form)         { form.hidden = false; }
-  }
-
-  function showLobbyActions() {
-    if (gameSelect)   { gameSelect.hidden = true; }
-    if (joinForm)     { joinForm.hidden = true; }
-    if (lobbyActions) { lobbyActions.hidden = false; }
-  }
 
   if (btnCreate) {
     btnCreate.addEventListener('click', function () { showSubForm(gameSelect); });
@@ -290,6 +271,11 @@ function initDesktopPage() {
         storedCode,
         null /* no pairing_url after page refresh */
       );
+      // Only reconnect when already on the room path (D-17)
+      connectWS(function () { sendReconnect(); });
+    } else {
+      // On /room/ path but no session data — go back to lobby
+      history.replaceState(null, '', '/');
     }
   }
 }
@@ -443,6 +429,12 @@ function renderRoomPage(slot, roomCode, pairingUrl) {
         ctx.fillText('above.', 10, 140);
       }
     }
+  }
+
+  // Wire leave button (re-wire each render to avoid duplicate listeners)
+  var leaveBtn = document.getElementById('btn-leave-room');
+  if (leaveBtn) {
+    leaveBtn.onclick = leaveRoom;
   }
 
   // Initialize slot roster
@@ -624,6 +616,37 @@ function appendEventLog(event, slot, username) {
 
   // Auto-scroll to bottom
   log.scrollTop = log.scrollHeight;
+}
+
+function leaveRoom() {
+  // Clear session so reload doesn't re-enter the room
+  sessionStorage.removeItem('reconnect_token');
+  sessionStorage.removeItem('room_code');
+  sessionStorage.removeItem('my_slot');
+  currentRoom = null;
+  if (ws) { ws.close(); ws = null; }
+  history.pushState(null, '', '/');
+  showView('view-lobby');
+  showLobbyActions();
+}
+
+function showLobbyActions() {
+  var lobbyActions = document.getElementById('lobby-actions');
+  var gameSelect   = document.getElementById('view-game-select');
+  var joinForm     = document.getElementById('view-join-form');
+  if (gameSelect)   { gameSelect.hidden = true; }
+  if (joinForm)     { joinForm.hidden = true; }
+  if (lobbyActions) { lobbyActions.hidden = false; }
+}
+
+function showSubForm(form) {
+  var lobbyActions = document.getElementById('lobby-actions');
+  var gameSelect   = document.getElementById('view-game-select');
+  var joinForm     = document.getElementById('view-join-form');
+  if (lobbyActions) { lobbyActions.hidden = true; }
+  if (gameSelect)   { gameSelect.hidden = true; }
+  if (joinForm)     { joinForm.hidden = true; }
+  if (form)         { form.hidden = false; }
 }
 
 function sendReconnect() {
