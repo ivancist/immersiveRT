@@ -100,12 +100,12 @@ Plans:
   4. Disconnecting a phone and reconnecting within 60 seconds reclaims the same slot and playerId without re-entering the code
   5. Room lifecycle events (player joined, left, reconnected, room full) are observable on the desktop — at minimum logged to console or shown in a debug overlay
 
-**Plans**: 4 plans
+**Plans**: 1/4 plans executed
 
 Plans:
 **Wave 1** *(parallel)*
 
-- [ ] 03-01-PLAN.md — Package slopcheck + pairing_token.rs (HMAC token engine) + room_registry.rs (slot/hold-timer/lifecycle state)
+- [x] 03-01-PLAN.md — Package slopcheck + pairing_token.rs (HMAC token engine) + room_registry.rs (slot/hold-timer/lifecycle state)
 - [ ] 03-03-PLAN.md — docker/nginx/nginx.conf (HTTPS + SPA routing) + docker-compose.yml nginx update
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -208,7 +208,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 |-------|----------------|--------|-----------|
 | 1. Server and Transport Foundation | 3/3 | Complete    | 2026-07-06 |
 | 2. Signaling, TURN, and Deployment | 4/5 | In Progress|  |
-| 3. Session and Pairing | 0/TBD | Not started | - |
+| 3. Session and Pairing | 1/4 | In Progress|  |
 | 4. Phone Bootstrap and WebRTC Channels | 0/TBD | Not started | - |
 | 5. Sensor Fusion and Packet Encoding | 0/TBD | Not started | - |
 | 6. Desktop Receive, Decode, and Rendering | 0/TBD | Not started | - |
