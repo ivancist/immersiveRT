@@ -175,6 +175,18 @@ async fn handle_wt_connection(
                             continue;
                         }
 
+                        // Validate the 'from' field matches the registered ID to prevent
+                        // message spoofing / man-in-the-middle of WebRTC negotiation.
+                        if envelope.from != my_id {
+                            tracing::warn!(
+                                registered = %my_id,
+                                claimed_from = %envelope.from,
+                                "WT client spoofed 'from' field, dropping message"
+                            );
+                            let _ = send.finish().await;
+                            continue;
+                        }
+
                         // Re-serialize the envelope to forward its bytes via the broker.
                         let payload = match serde_json::to_vec(&envelope) {
                             Ok(p) => p,

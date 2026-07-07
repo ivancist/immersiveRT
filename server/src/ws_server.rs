@@ -209,6 +209,17 @@ where
                                 "WS client from {addr} not yet registered, dropping message"
                             );
                         } else {
+                            // Validate the 'from' field matches the registered ID to prevent
+                            // message spoofing / man-in-the-middle of WebRTC negotiation.
+                            let registered_id = my_id.as_ref().unwrap();
+                            if envelope.from != *registered_id {
+                                tracing::warn!(
+                                    registered = %registered_id,
+                                    claimed_from = %envelope.from,
+                                    "WS client spoofed 'from' field, dropping message"
+                                );
+                                continue;
+                            }
                             // Route to the target client; caller logs the warning per D-05.
                             let payload = match serde_json::to_vec(&envelope) {
                                 Ok(p) => p,
