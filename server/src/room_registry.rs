@@ -997,12 +997,15 @@ impl RoomRegistry {
             return;
         }
 
-        // 6. Dedup guard: insert before broadcasting to prevent a second broadcast
-        //    from a redundant confirmation arriving concurrently.
-        if self.player_ready_sent.contains_key(&(room_code.clone(), phone_id.clone())) {
-            return;
+        // 6. Dedup guard: atomic check-and-insert via Entry API to prevent a TOCTOU
+        //    race where two concurrent rtc-channel-ready tasks both see contains_key==false
+        //    and both broadcast player-ready (Plan 02, D-09).
+        use dashmap::mapref::entry::Entry;
+        match self.player_ready_sent.entry((room_code.clone(), phone_id.clone())) {
+            Entry::Occupied(_) => return,
+            Entry::Vacant(e) => { e.insert(()); }
         }
-        self.player_ready_sent.insert((room_code.clone(), phone_id.clone()), ());
+        // Only the task that wins the Vacant entry reaches this point.
 
         // 7. Build player-ready payload and broadcast (Pitfall 3: no DashMap Ref held).
         let player_ready_bytes = match serde_json::to_vec(&serde_json::json!({
