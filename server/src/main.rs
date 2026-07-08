@@ -194,6 +194,20 @@ async fn main() -> anyhow::Result<()> {
         heartbeat_interval_secs,
     );
 
+    // WR-06: Periodically evict expired consumed pairing tokens to prevent unbounded growth.
+    // Sweep every 5 minutes — tokens expire at pairing_ttl_secs (default 90 s), so a 5-minute
+    // sweep keeps the map bounded to at most ~5× the per-TTL join rate.
+    {
+        let registry_for_sweep = room_registry.clone();
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(300); // 5 minutes
+            loop {
+                tokio::time::sleep(interval).await;
+                registry_for_sweep.sweep_expired_pairing_tokens();
+            }
+        });
+    }
+
     // Axum HTTP state — Arc-wrapped so the handler can clone the secret reference.
     let app_state = Arc::new(AppState { turn_shared_secret, api_token });
     let http_app = Router::new()

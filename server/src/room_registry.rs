@@ -128,6 +128,14 @@ impl RoomRegistry {
         }
     }
 
+    /// Evict expired consumed pairing tokens from the used-token store (WR-06).
+    ///
+    /// Delegates to `PairingTokenStore::sweep_expired`. Call periodically from a
+    /// spawned background task (e.g., every 5 minutes) to prevent unbounded growth.
+    pub fn sweep_expired_pairing_tokens(&self) {
+        self.pairing_store.sweep_expired();
+    }
+
     /// Broadcast a JSON event to all Connected desktops in the room, excluding `exclude_client_id`.
     ///
     /// Pattern: collect Connected slot client_ids into a Vec while holding the DashMap Ref,
