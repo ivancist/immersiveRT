@@ -90,6 +90,13 @@ pub struct RoomRegistry {
     base_url: String,
     hold_ttl_secs: u64,
     pairing_ttl_secs: u64,
+    /// Tracks two-sided WebRTC channel readiness (Plan 02, D-08/D-09).
+    /// Key: (room_code, phone_client_id, desktop_client_id)
+    /// Value: (phone_confirmed, desktop_confirmed)
+    channel_ready: Arc<DashMap<(RoomCode, String, String), (bool, bool)>>,
+    /// Dedup guard: prevents duplicate player-ready broadcasts (Plan 02, D-09).
+    /// Key: (room_code, phone_client_id) — inserted on first player-ready broadcast.
+    player_ready_sent: Arc<DashMap<(RoomCode, String), ()>>,
 }
 
 impl RoomRegistry {
@@ -110,6 +117,8 @@ impl RoomRegistry {
             base_url,
             hold_ttl_secs,
             pairing_ttl_secs,
+            channel_ready: Arc::new(DashMap::new()),
+            player_ready_sent: Arc::new(DashMap::new()),
         }
     }
 
@@ -812,6 +821,184 @@ impl RoomRegistry {
         }
     }
 
+    /// Route a server-push event to the phone associated with a room slot.
+    ///
+    /// Collects the phone_client_id while holding the DashMap Ref, drops the Ref,
+    /// then calls broker.route — never holds a Ref across the broker call (Pitfall 3).
+    fn route_to_phone(&self, room_code: &str, event_bytes: Vec<u8>, broker: &SignalingBroker) {
+        let phone_id: Option<String> = self.rooms.get(room_code).and_then(|room| {
+            room.slots.iter().find_map(|s| {
+                s.as_ref().and_then(|info| info.phone_client_id.clone())
+            })
+        });
+        // DashMap Ref dropped here.
+        if let Some(id) = phone_id {
+            if !broker.route(&id, event_bytes) {
+                tracing::warn!(phone_id = %id, "route_to_phone: phone not connected");
+            }
+        }
+    }
+
+    /// Handle an `rtc-channel-ready` message from either the phone or a desktop.
+    ///
+    /// Both sides send this when their WebRTC data channel opens. This method
+    /// tracks two-sided confirmation and fires exactly one `player-ready` broadcast
+    /// once every Connected desktop has a confirmed channel with the phone (D-08/D-09).
+    ///
+    /// Collect-then-drop: all DashMap Refs are dropped before any broker.route call
+    /// (RESEARCH.md Pitfall 3). Input validation: missing `with` → early return
+    /// (T-04-06 mitigation).
+    pub async fn handle_rtc_channel_ready(
+        &self,
+        sender_id: &str,
+        payload: &serde_json::Value,
+        broker: &SignalingBroker,
+    ) {
+        // 1. Defensive extraction of "with" (T-04-06 mitigation).
+        let with_id = match payload["with"].as_str() {
+            Some(v) => v.to_string(),
+            None => {
+                tracing::warn!(sender_id = %sender_id, "rtc-channel-ready: missing 'with' field");
+                return;
+            }
+        };
+
+        // 2. Determine sender role by scanning room slots (T-04-07: role derived
+        //    from server-held slot state, not client-asserted identity).
+        //    Collect all needed data and drop all DashMap Refs before any async work.
+        let role_info: Option<(RoomCode, String, String, bool)> = {
+            let mut found: Option<(RoomCode, String, String, bool)> = None;
+            'outer: for room_ref in self.rooms.iter() {
+                let room = room_ref.value();
+                for slot in room.slots.iter().flatten() {
+                    if slot.phone_client_id.as_deref() == Some(sender_id) {
+                        // Sender is the phone; with_id is the desktop
+                        found = Some((room.code.clone(), sender_id.to_string(), with_id.clone(), true));
+                        break 'outer;
+                    }
+                    if slot.client_id == sender_id {
+                        // Sender is the desktop; with_id is the phone
+                        found = Some((room.code.clone(), with_id.clone(), sender_id.to_string(), false));
+                        break 'outer;
+                    }
+                }
+            }
+            found
+        };
+        // All DashMap Refs dropped here.
+
+        let (room_code, phone_id, desktop_id, is_phone_sender) = match role_info {
+            Some(v) => v,
+            None => {
+                tracing::warn!(
+                    sender_id = %sender_id,
+                    "rtc-channel-ready: sender not found in any room slot"
+                );
+                return;
+            }
+        };
+
+        // 3. Upsert the channel_ready entry; canonical key: (room, phone, desktop).
+        {
+            let mut entry = self.channel_ready
+                .entry((room_code.clone(), phone_id.clone(), desktop_id.clone()))
+                .or_insert((false, false));
+            if is_phone_sender {
+                entry.0 = true;
+            } else {
+                entry.1 = true;
+            }
+        }
+        // DashMap RefMut dropped here.
+
+        // 4. Collect all Connected desktop client_ids + phone slot/username.
+        //    Drop the room Ref before checking channel_ready (Pitfall 3).
+        let (all_desktop_ids, phone_slot, phone_username): (Vec<String>, u8, String) = {
+            if let Some(room_ref) = self.rooms.get(&room_code) {
+                let desktops: Vec<String> = room_ref.slots.iter()
+                    .filter_map(|s| {
+                        s.as_ref().and_then(|info| {
+                            if info.status == SlotStatus::Connected {
+                                Some(info.client_id.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+
+                let (slot_num, username) = room_ref.slots.iter()
+                    .enumerate()
+                    .find_map(|(i, s)| {
+                        s.as_ref().and_then(|info| {
+                            if info.phone_client_id.as_deref() == Some(phone_id.as_str()) {
+                                Some(((i + 1) as u8, info.username.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .unwrap_or((0u8, String::new()));
+
+                (desktops, slot_num, username)
+            } else {
+                (vec![], 0u8, String::new())
+            }
+        };
+        // DashMap Ref dropped here.
+
+        // 5. Check whether every Connected desktop has (true, true) for this phone.
+        if all_desktop_ids.is_empty() {
+            return;
+        }
+        let all_confirmed = all_desktop_ids.iter().all(|desktop| {
+            self.channel_ready
+                .get(&(room_code.clone(), phone_id.clone(), desktop.clone()))
+                .map(|entry| entry.0 && entry.1)
+                .unwrap_or(false)
+        });
+        // All short-lived channel_ready Refs dropped after each .get() call.
+
+        if !all_confirmed {
+            return;
+        }
+
+        // 6. Dedup guard: insert before broadcasting to prevent a second broadcast
+        //    from a redundant confirmation arriving concurrently.
+        if self.player_ready_sent.contains_key(&(room_code.clone(), phone_id.clone())) {
+            return;
+        }
+        self.player_ready_sent.insert((room_code.clone(), phone_id.clone()), ());
+
+        // 7. Build player-ready payload and broadcast (Pitfall 3: no DashMap Ref held).
+        let player_ready_bytes = match serde_json::to_vec(&serde_json::json!({
+            "type": "player-ready",
+            "payload": {
+                "player_id": phone_id,
+                "slot": phone_slot,
+                "username": phone_username
+            }
+        })) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!("failed to serialize player-ready: {e}");
+                return;
+            }
+        };
+
+        tracing::info!(
+            room_code = %room_code,
+            phone_id = %phone_id,
+            slot = %phone_slot,
+            "player-ready: all channels confirmed, broadcasting"
+        );
+
+        // Broadcast to all Connected desktops.
+        self.broadcast_to_room(&room_code, "", player_ready_bytes.clone(), broker);
+        // Route to the phone as well.
+        self.route_to_phone(&room_code, player_ready_bytes, broker);
+    }
+
     /// Generate a 6-character uppercase room code from the unambiguous charset
     /// `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (D-05, Claude's discretion).
     ///
@@ -1169,6 +1356,193 @@ mod tests {
             turn_entry["credential"].as_str().is_some(),
             "TURN entry must have credential"
         );
+    }
+
+    // ── Phase 4 Plan 02 rtc-channel-ready / player-ready tests ──────────────────
+
+    /// Helper: join one desktop and pair one phone; returns (room_code, phone_rx, desktop_rx).
+    async fn setup_one_desktop_one_phone(
+        registry: &RoomRegistry,
+        broker: &SignalingBroker,
+        desktop_id: &str,
+        phone_id: &str,
+    ) -> String {
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join(desktop_id, &join_payload, broker).await;
+        assert_eq!(join_result["type"], "join-ack");
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+        let room_code = join_result["payload"]["room_code"].as_str().unwrap().to_string();
+
+        let pair_payload = serde_json::json!({ "token": token });
+        let pair_result = registry.handle_pair(phone_id, &pair_payload, broker).await;
+        assert_eq!(pair_result["type"], "pair-ack", "phone pair should succeed");
+
+        room_code
+    }
+
+    /// Both sides confirm a single channel → player-ready is routed to both
+    /// client-D and phone-P; payload.player_id == phone-P, slot == 1 (D-08/D-09).
+    #[tokio::test]
+    async fn test_rtc_channel_ready_both_sides_fires_player_ready() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d = broker.register("client-D".to_string()).unwrap();
+        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+
+        // Drain any setup events on rx_d (e.g. player-joined broadcasts — none expected
+        // since client-D is the only member when it joins, but defensive drain).
+        while rx_d.try_recv().is_ok() {}
+        while rx_p.try_recv().is_ok() {}
+
+        // Phone confirms its side.
+        let phone_payload = serde_json::json!({ "with": "client-D" });
+        registry.handle_rtc_channel_ready("phone-P", &phone_payload, &broker).await;
+
+        // No player-ready yet (desktop hasn't confirmed).
+        assert!(rx_d.try_recv().is_err(), "no player-ready while desktop side is pending");
+        assert!(rx_p.try_recv().is_err(), "no player-ready while desktop side is pending");
+
+        // Desktop confirms its side.
+        let desktop_payload = serde_json::json!({ "with": "phone-P" });
+        registry.handle_rtc_channel_ready("client-D", &desktop_payload, &broker).await;
+
+        // Both sides confirmed → player-ready must be delivered.
+        let msg_d = rx_d.try_recv().expect("client-D should receive player-ready");
+        let event_d: serde_json::Value = serde_json::from_slice(&msg_d).unwrap();
+        assert_eq!(event_d["type"], "player-ready", "desktop must receive player-ready");
+        assert_eq!(event_d["payload"]["player_id"], "phone-P", "player_id must be phone-P");
+        assert_eq!(event_d["payload"]["slot"], 1u64, "phone is paired with slot 1");
+
+        let msg_p = rx_p.try_recv().expect("phone-P should receive player-ready");
+        let event_p: serde_json::Value = serde_json::from_slice(&msg_p).unwrap();
+        assert_eq!(event_p["type"], "player-ready", "phone must receive player-ready");
+        assert_eq!(event_p["payload"]["player_id"], "phone-P");
+    }
+
+    /// Only one side confirms → no player-ready emitted (desktop side still pending).
+    #[tokio::test]
+    async fn test_rtc_channel_ready_single_side_no_player_ready() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d = broker.register("client-D".to_string()).unwrap();
+        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+
+        while rx_d.try_recv().is_ok() {}
+        while rx_p.try_recv().is_ok() {}
+
+        // Only phone confirms.
+        let phone_payload = serde_json::json!({ "with": "client-D" });
+        registry.handle_rtc_channel_ready("phone-P", &phone_payload, &broker).await;
+
+        // No player-ready should be emitted.
+        assert!(rx_d.try_recv().is_err(), "no player-ready when only one side confirmed");
+        assert!(rx_p.try_recv().is_err(), "no player-ready when only one side confirmed");
+    }
+
+    /// Third redundant confirmation after both sides have confirmed does NOT
+    /// emit a second player-ready (player_ready_sent dedup guard).
+    #[tokio::test]
+    async fn test_player_ready_broadcast_once() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d = broker.register("client-D".to_string()).unwrap();
+        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+
+        while rx_d.try_recv().is_ok() {}
+        while rx_p.try_recv().is_ok() {}
+
+        // Both sides confirm — triggers the first (and only) player-ready.
+        registry.handle_rtc_channel_ready("phone-P", &serde_json::json!({"with":"client-D"}), &broker).await;
+        registry.handle_rtc_channel_ready("client-D", &serde_json::json!({"with":"phone-P"}), &broker).await;
+
+        // Drain the single player-ready delivery.
+        assert!(rx_d.try_recv().is_ok(), "first player-ready must be delivered to desktop");
+        assert!(rx_p.try_recv().is_ok(), "first player-ready must be delivered to phone");
+
+        // Third redundant confirmation — dedup guard must block a second broadcast.
+        registry.handle_rtc_channel_ready("phone-P", &serde_json::json!({"with":"client-D"}), &broker).await;
+
+        assert!(rx_d.try_recv().is_err(), "no second player-ready (dedup guard)");
+        assert!(rx_p.try_recv().is_err(), "no second player-ready (dedup guard)");
+    }
+
+    /// Two desktops in room — player-ready fires only after BOTH channels are
+    /// both-sides confirmed, not after the first channel is established.
+    #[tokio::test]
+    async fn test_rtc_channel_ready_two_desktops_waits_for_all() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d1 = broker.register("client-D1".to_string()).unwrap();
+        let mut rx_d2 = broker.register("client-D2".to_string()).unwrap();
+        let mut rx_p  = broker.register("phone-P".to_string()).unwrap();
+
+        // Desktop-1 creates room.
+        let join1 = serde_json::json!({"username": "Alice", "room_code": "", "game_type": "demo"});
+        let r1 = registry.handle_join("client-D1", &join1, &broker).await;
+        assert_eq!(r1["type"], "join-ack");
+        let room_code = r1["payload"]["room_code"].as_str().unwrap().to_string();
+        let pairing_url1 = r1["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token1 = pairing_url1.split("token=").nth(1).unwrap().to_string();
+
+        // Desktop-2 joins same room.
+        let join2 = serde_json::json!({"username": "Bob", "room_code": room_code, "game_type": "demo"});
+        let r2 = registry.handle_join("client-D2", &join2, &broker).await;
+        assert_eq!(r2["type"], "join-ack");
+
+        // Drain setup events (client-D1 receives player-joined for D2).
+        while rx_d1.try_recv().is_ok() {}
+        while rx_d2.try_recv().is_ok() {}
+        while rx_p.try_recv().is_ok() {}
+
+        // Phone pairs with token from slot-1 (client-D1).
+        let pair_result = registry.handle_pair("phone-P", &serde_json::json!({"token": token1}), &broker).await;
+        assert_eq!(pair_result["type"], "pair-ack");
+        // pair-ack must include both desktops in peers.
+        let peers = pair_result["payload"]["peers"].as_array().unwrap();
+        assert_eq!(peers.len(), 2, "pair-ack must include both desktops");
+
+        // Channel-1 (phone ↔ D1): phone side confirms.
+        registry.handle_rtc_channel_ready("phone-P", &serde_json::json!({"with":"client-D1"}), &broker).await;
+        // Channel-1: D1 side confirms → first channel fully open.
+        registry.handle_rtc_channel_ready("client-D1", &serde_json::json!({"with":"phone-P"}), &broker).await;
+
+        // player-ready must NOT fire yet (D2 channel still pending).
+        assert!(rx_d1.try_recv().is_err(), "no player-ready: D2 channel still pending");
+        assert!(rx_d2.try_recv().is_err(), "no player-ready: D2 channel still pending");
+        assert!(rx_p.try_recv().is_err(),  "no player-ready: D2 channel still pending");
+
+        // Channel-2 (phone ↔ D2): phone side confirms.
+        registry.handle_rtc_channel_ready("phone-P", &serde_json::json!({"with":"client-D2"}), &broker).await;
+        // Channel-2: D2 side confirms → all channels fully open.
+        registry.handle_rtc_channel_ready("client-D2", &serde_json::json!({"with":"phone-P"}), &broker).await;
+
+        // Now player-ready must be delivered to all three: D1, D2, and the phone.
+        let msg_d1 = rx_d1.try_recv().expect("client-D1 should receive player-ready");
+        let event_d1: serde_json::Value = serde_json::from_slice(&msg_d1).unwrap();
+        assert_eq!(event_d1["type"], "player-ready");
+        assert_eq!(event_d1["payload"]["player_id"], "phone-P");
+
+        let msg_d2 = rx_d2.try_recv().expect("client-D2 should receive player-ready");
+        let event_d2: serde_json::Value = serde_json::from_slice(&msg_d2).unwrap();
+        assert_eq!(event_d2["type"], "player-ready");
+
+        let msg_p = rx_p.try_recv().expect("phone-P should receive player-ready");
+        let event_p: serde_json::Value = serde_json::from_slice(&msg_p).unwrap();
+        assert_eq!(event_p["type"], "player-ready");
+        assert_eq!(event_p["payload"]["player_id"], "phone-P");
     }
 
     /// An unknown/consumed token returns type "pair-error" with reason "invalid_token"

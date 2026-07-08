@@ -269,6 +269,16 @@ where
                                     let ack = r#"{"type":"leave-ack"}"#;
                                     let _ = write.send(Message::Text(ack.into())).await;
                                 }
+                                "rtc-channel-ready" => {
+                                    room_registry
+                                        .handle_rtc_channel_ready(
+                                            &envelope.from,
+                                            &envelope.payload,
+                                            &broker,
+                                        )
+                                        .await;
+                                    // Fire-and-forget: no response to the desktop.
+                                }
                                 _ => {
                                     // Existing broker routing (offer, answer, ice-candidate, etc.)
                                     // Route to the target client; caller logs the warning per D-05.

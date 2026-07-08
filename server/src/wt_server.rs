@@ -240,6 +240,16 @@ async fn handle_wt_connection(
                                 room_registry.handle_leave(&envelope.from, &broker).await;
                                 let _ = send.finish().await;
                             }
+                            "rtc-channel-ready" => {
+                                room_registry
+                                    .handle_rtc_channel_ready(
+                                        &envelope.from,
+                                        &envelope.payload,
+                                        &broker,
+                                    )
+                                    .await;
+                                let _ = send.finish().await;
+                            }
                             _ => {
                                 // Re-serialize the envelope to forward its bytes via the broker.
                                 let payload = match serde_json::to_vec(&envelope) {
