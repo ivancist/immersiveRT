@@ -131,8 +131,11 @@ async fn main() -> anyhow::Result<()> {
     // Room registry — manages room lifecycle, slot assignment, hold timers,
     // pairing token generation, and reconnect token lookup (SESS-01..SESS-06).
     // Constructed here and cloned into both WT and WS listeners.
+    // turn_shared_secret is threaded here so handle_pair can generate ephemeral
+    // TURN credentials without an extra HTTP call (INFRA-04, D-06, Phase 4).
     let room_registry = Arc::new(room_registry::RoomRegistry::new(
         pairing_token_secret,
+        turn_shared_secret.clone(),
         base_url,
         hold_ttl_secs,
         pairing_ttl_secs,

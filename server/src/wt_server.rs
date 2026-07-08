@@ -230,7 +230,7 @@ async fn handle_wt_connection(
                             }
                             "pair" => {
                                 let ack = room_registry
-                                    .handle_pair(&envelope.payload, &broker)
+                                    .handle_pair(&envelope.from, &envelope.payload, &broker)
                                     .await;
                                 let ack_bytes = serde_json::to_vec(&ack).unwrap_or_default();
                                 let _ = send.write_all(&ack_bytes).await;

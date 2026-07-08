@@ -1,5 +1,6 @@
 use crate::broker::SignalingBroker;
 use crate::pairing_token::{generate_pairing_token, generate_reconnect_token, PairingTokenStore};
+use crate::turn_creds::generate_turn_credentials;
 use dashmap::DashMap;
 use std::{
     sync::Arc,
@@ -30,6 +31,12 @@ pub struct SlotInfo {
     pub username: String,
     pub status: SlotStatus,
     pub reconnect_token: String,
+    /// Set at pair time — the phone's registered client_id.
+    /// Enables server→phone routing (route_to_phone helper).
+    pub phone_client_id: Option<String>,
+    /// Updated on each heartbeat message from the phone (Plan 03).
+    #[allow(dead_code)] // Activated in Plan 03 (handle_heartbeat + phones_missing_heartbeat).
+    pub last_heartbeat: Option<std::time::Instant>,
 }
 
 /// A room: fixed 8-slot array, indexed by slot_id - 1.
@@ -77,6 +84,9 @@ pub struct RoomRegistry {
     reconnect_tokens: Arc<DashMap<String, (RoomCode, SlotId)>>,
     pairing_store: Arc<PairingTokenStore>,
     pairing_secret: String,
+    /// HMAC secret for coturn's use-auth-secret REST API (INFRA-04).
+    /// Used in handle_pair to generate ephemeral TURN credentials.
+    turn_shared_secret: String,
     base_url: String,
     hold_ttl_secs: u64,
     pairing_ttl_secs: u64,
@@ -85,6 +95,7 @@ pub struct RoomRegistry {
 impl RoomRegistry {
     pub fn new(
         pairing_secret: String,
+        turn_shared_secret: String,
         base_url: String,
         hold_ttl_secs: u64,
         pairing_ttl_secs: u64,
@@ -95,6 +106,7 @@ impl RoomRegistry {
             reconnect_tokens: Arc::new(DashMap::new()),
             pairing_store: Arc::new(PairingTokenStore::new()),
             pairing_secret,
+            turn_shared_secret,
             base_url,
             hold_ttl_secs,
             pairing_ttl_secs,
@@ -270,6 +282,8 @@ impl RoomRegistry {
                 username: username_trimmed.clone(),
                 status: SlotStatus::Connected,
                 reconnect_token: reconnect_token.clone(),
+                phone_client_id: None,
+                last_heartbeat: None,
             });
 
             // Snapshot current occupants (after inserting joiner) for join-ack.
@@ -473,10 +487,15 @@ impl RoomRegistry {
 
     /// Handle a `pair` message from a phone client.
     ///
-    /// Validates the HMAC pairing token (single-use), finds the desktop's client_id,
-    /// returns a `pair-ack` so the phone can initiate WebRTC to the desktop.
+    /// Validates the HMAC pairing token (single-use, T-04-02 mitigation), records the
+    /// phone's client_id in the paired SlotInfo, and returns an enhanced `pair-ack`
+    /// carrying the room roster (peers[]) and ephemeral ICE server config (D-04).
+    ///
+    /// Collect-then-drop pattern: DashMap RefMut is held only to write phone_client_id,
+    /// then dropped before collecting peers and calling generate_turn_credentials.
     pub async fn handle_pair(
         &self,
+        phone_client_id: &str,
         raw_payload: &serde_json::Value,
         _broker: &SignalingBroker,
     ) -> serde_json::Value {
@@ -490,7 +509,7 @@ impl RoomRegistry {
             }
         };
 
-        // Validate and consume token (single-use, T-03-01 mitigation).
+        // Validate and consume token (single-use, T-04-02 mitigation).
         let (room_code, slot_id) =
             match self.pairing_store.validate_and_consume(&self.pairing_secret, &token) {
                 Some(r) => r,
@@ -502,27 +521,123 @@ impl RoomRegistry {
                 }
             };
 
-        // Find the desktop's client_id from the slot.
-        let desktop_client_id = self.rooms.get(&room_code).and_then(|r| {
-            r.slots
-                .get((slot_id - 1) as usize)
-                .and_then(|s| s.as_ref().map(|i| i.client_id.clone()))
-        });
-
-        match desktop_client_id {
-            Some(id) => {
-                serde_json::json!({
-                    "type": "pair-ack",
-                    "payload": {"desktop_id": id}
-                })
-            }
-            None => {
-                serde_json::json!({
-                    "type": "pair-error",
-                    "payload": {"reason": "slot_not_found"}
-                })
+        // Step 1: Store phone_client_id in the paired slot (collect-then-drop).
+        // Hold RefMut only for the write; drop before any async or broker call.
+        {
+            if let Some(mut room_ref) = self.rooms.get_mut(&room_code) {
+                let idx = (slot_id - 1) as usize;
+                if let Some(Some(slot)) = room_ref.slots.get_mut(idx) {
+                    slot.phone_client_id = Some(phone_client_id.to_string());
+                }
             }
         }
+        // DashMap RefMut dropped here.
+
+        // Step 2: Collect desktop_id, reconnect_token, and peers list (collect-then-drop).
+        let (desktop_client_id, reconnect_token_val, peers_list) = {
+            if let Some(room_ref) = self.rooms.get(&room_code) {
+                let desktop_slot = room_ref.slots
+                    .get((slot_id - 1) as usize)
+                    .and_then(|s| s.as_ref());
+
+                let desktop_id = match desktop_slot {
+                    Some(s) => s.client_id.clone(),
+                    None => {
+                        return serde_json::json!({
+                            "type": "pair-error",
+                            "payload": {"reason": "slot_not_found"}
+                        });
+                    }
+                };
+                let reconnect_tok = desktop_slot
+                    .map(|s| s.reconnect_token.clone())
+                    .unwrap_or_default();
+
+                // Build peers list from all Connected desktop slots (never the phone — Pitfall 7).
+                let peers: Vec<serde_json::Value> = room_ref.slots.iter()
+                    .enumerate()
+                    .filter_map(|(i, s)| {
+                        s.as_ref().and_then(|info| {
+                            if info.status == SlotStatus::Connected {
+                                Some(serde_json::json!({
+                                    "id": info.client_id,
+                                    "slot": (i + 1) as u8,
+                                    "username": info.username
+                                }))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+
+                (desktop_id, reconnect_tok, peers)
+            } else {
+                return serde_json::json!({
+                    "type": "pair-error",
+                    "payload": {"reason": "slot_not_found"}
+                });
+            }
+        };
+        // DashMap Ref dropped here.
+
+        // Step 3: Generate ephemeral TURN credentials for the phone.
+        // Use pairing_ttl_secs as the TURN TTL to avoid short-lived credentials (Pitfall 5).
+        let creds = match generate_turn_credentials(
+            &self.turn_shared_secret,
+            phone_client_id,
+            self.pairing_ttl_secs,
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("failed to generate TURN credentials at pair time: {e}");
+                return serde_json::json!({
+                    "type": "pair-error",
+                    "payload": {"reason": "internal_error"}
+                });
+            }
+        };
+
+        // Extract the hostname from base_url for STUN/TURN endpoints.
+        // Format: https://<host>[:<port>] — strip scheme and optional port.
+        let coturn_host = self.base_url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split(':')
+            .next()
+            .unwrap_or("localhost");
+
+        let ice_servers = serde_json::json!([
+            { "urls": format!("stun:{}:3478", coturn_host) },
+            {
+                "urls": format!("turn:{}:3478", coturn_host),
+                "username": creds.username,
+                "credential": creds.password
+            }
+        ]);
+
+        // pairing_url echoes the phone entry point (reconnect semantics — D-14).
+        let pairing_url = format!("{}/phone", self.base_url);
+
+        tracing::info!(
+            room_code = %room_code, slot_id = %slot_id,
+            phone_client_id = %phone_client_id,
+            "pair: phone paired with desktop, roster size = {}",
+            peers_list.len()
+        );
+
+        serde_json::json!({
+            "type": "pair-ack",
+            "payload": {
+                "desktop_id": desktop_client_id,
+                "slot": slot_id,
+                "room_code": room_code,
+                "reconnect_token": reconnect_token_val,
+                "pairing_url": pairing_url,
+                "peers": peers_list,
+                "ice_servers": ice_servers
+            }
+        })
     }
 
     /// Called when a WS/WT connection drops. Marks slot Disconnected, broadcasts
@@ -730,6 +845,7 @@ mod tests {
     fn make_registry() -> RoomRegistry {
         RoomRegistry::new(
             "test-pairing-secret".to_string(),
+            "turn-secret".to_string(),           // turn_shared_secret (fixed for tests)
             "https://localhost:8443".to_string(),
             60,  // hold_ttl_secs
             300, // pairing_ttl_secs
@@ -857,6 +973,7 @@ mod tests {
         // Use a 0-second hold_ttl so the timer fires almost immediately.
         let registry = RoomRegistry::new(
             "sec".to_string(),
+            "turn-secret".to_string(),
             "https://localhost:8443".to_string(),
             0,   // hold_ttl = 0 → fires as soon as awaited
             300,
@@ -910,6 +1027,7 @@ mod tests {
     async fn test_hold_timer_fires() {
         let registry = RoomRegistry::new(
             "sec".to_string(),
+            "turn-secret".to_string(),
             "https://localhost:8443".to_string(),
             0,   // hold_ttl = 0 → fires almost immediately
             300,

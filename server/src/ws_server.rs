@@ -253,7 +253,7 @@ where
                                 }
                                 "pair" => {
                                     let ack = room_registry
-                                        .handle_pair(&envelope.payload, &broker)
+                                        .handle_pair(&envelope.from, &envelope.payload, &broker)
                                         .await;
                                     let ack_text = serde_json::to_string(&ack)
                                         .unwrap_or_else(|e| {

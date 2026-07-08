@@ -76,11 +76,72 @@ pub struct PairPayload {
     pub token: String,
 }
 
-/// Typed payload for `pair-ack` responses sent back to the phone client.
+/// A single desktop peer in the room — included in `PairAckPayload.peers`.
+///
+/// Only `SlotStatus::Connected` desktop slots are included; the phone itself
+/// is never listed (Pitfall 7 — phone is not a desktop slot).
+#[allow(dead_code)] // Constructed via serde_json::json! in handle_pair; activated fully in Plan 02.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PeerInfo {
+    pub id: String,
+    pub slot: u8,
+    pub username: String,
+}
+
+/// Typed payload for `pair-ack` responses sent back to the phone client (D-04).
+///
+/// Enhanced in Phase 4 to carry the full desktop roster plus ICE servers so
+/// the phone can fan out WebRTC without an extra round trip.
+#[allow(dead_code)] // Wire shape documented here; handle_pair builds JSON via serde_json::json!.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PairAckPayload {
-    /// The `client_id` of the desktop that owns this slot.
+    /// The `client_id` of the desktop that owns the paired slot.
     pub desktop_id: String,
+    /// Slot number (1-indexed) the phone is paired to.
+    pub slot: u8,
+    /// Room code for this session.
+    pub room_code: String,
+    /// Reconnect token for the paired slot (allows re-pair after network interruption).
+    pub reconnect_token: String,
+    /// Phone entry URL (base_url + /phone).
+    pub pairing_url: String,
+    /// All Connected desktop slots in the room (never includes the phone itself).
+    pub peers: Vec<PeerInfo>,
+    /// ICE server configuration: STUN + TURN entries with ephemeral credentials.
+    pub ice_servers: serde_json::Value,
+}
+
+/// Typed payload for `rtc-channel-ready` messages (Plan 02).
+///
+/// Sent by both the phone (to server) and the desktop (to server) when their
+/// respective WebRTC data channel opens.
+#[allow(dead_code)] // Activated in Plan 02 (handle_rtc_channel_ready).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RtcChannelReadyPayload {
+    /// `client_id` of the peer this channel was opened with.
+    pub with: String,
+}
+
+/// Typed payload for `phone-state` messages (Plan 03).
+///
+/// Phone → server; server relays to all room desktops (D-18).
+/// State values: `background` | `foreground` | `wake-lock-lost` |
+/// `wake-lock-active` | `channel-lost` | `channel-recovered`.
+#[allow(dead_code)] // Activated in Plan 03 (handle_phone_state).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PhoneStatePayload {
+    pub state: String,
+    /// Present for `channel-lost` / `channel-recovered` — the peer's `client_id`.
+    pub with: Option<String>,
+}
+
+/// Typed payload for `player-ready` broadcasts (Plan 02).
+#[allow(dead_code)] // Activated in Plan 02 (handle_rtc_channel_ready all-confirmed path).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlayerReadyPayload {
+    pub player_id: String,
+    pub slot: u8,
+    pub username: String,
 }
 
 #[cfg(test)]

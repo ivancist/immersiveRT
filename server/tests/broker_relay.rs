@@ -19,6 +19,7 @@ async fn test_broker_relay_ws() {
     let broker = Arc::new(immersive_rt_server::broker::SignalingBroker::new());
     let registry = Arc::new(immersive_rt_server::room_registry::RoomRegistry::new(
         "test-secret".to_string(),
+        "turn-secret".to_string(),
         "http://localhost".to_string(),
         60,
         90,
