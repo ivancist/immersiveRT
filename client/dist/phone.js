@@ -210,6 +210,9 @@ function openChannelToPeer(peerId) {
   // WR-01: tracks whether this channel reached open so dc.onclose can guard
   // against double-decrement (e.g. closePeer + unexpected close).
   var channelIsOpen = false;
+  // WR-11: set to true before intentional close so dc.onclose suppresses the
+  // spurious channel-lost notification when closePeer calls pc.close().
+  var intentionalClose = false;
 
   pc.onnegotiationneeded = function() {
     pc.setLocalDescription()  // no args — auto-creates offer and sets local description
@@ -250,9 +253,9 @@ function openChannelToPeer(peerId) {
   };
 
   dc.onclose = function() {
-    // WR-01: only decrement if the channel actually reached open state; guards against
-    // double-decrement when dc.onclose fires after an intentional close that already
-    // decremented in closePeer.
+    // WR-11: suppress spurious channel-lost when closePeer drove this close intentionally.
+    if (intentionalClose) { return; }
+    // WR-01: only decrement if the channel actually reached open state.
     if (channelIsOpen) {
       channelIsOpen = false;
       if (openChannelCount > 0) { openChannelCount--; }
@@ -262,7 +265,9 @@ function openChannelToPeer(peerId) {
     sendPhoneState({ state: 'channel-lost', with: peerId });
   };
 
-  peerConnections.set(peerId, { pc: pc, dc: dc });
+  // WR-11: expose a flagClose helper so closePeer can suppress dc.onclose before
+  // calling pc.close(). Stored alongside pc/dc in the peerConnections entry.
+  peerConnections.set(peerId, { pc: pc, dc: dc, flagClose: function() { intentionalClose = true; } });
 }
 
 // Updates the X/Y channel counter in the connecting view (D-10).
@@ -456,12 +461,16 @@ function startMotionIndicator() {
 }
 
 // D-06/D-07: close and remove a peer connection from the mesh.
-// WR-01: openChannelCount decrement is handled by dc.onclose (guarded by channelIsOpen).
+// WR-11: call flagClose() before pc.close() to suppress the spurious channel-lost
+// notification that dc.onclose would otherwise send for a peer-left-driven close.
+// WR-01: decrement openChannelCount here (dc.onclose is suppressed by intentionalClose).
 function closePeer(peerId) {
   var entry = peerConnections.get(peerId);
   if (!entry) { return; }
+  if (entry.flagClose) { entry.flagClose(); }
   try { entry.pc.close(); } catch (e) { /* already closed */ }
   peerConnections.delete(peerId);
+  if (openChannelCount > 0) { openChannelCount--; }
   updateConnectingUI();
 }
 
