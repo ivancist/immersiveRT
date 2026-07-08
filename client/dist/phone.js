@@ -136,6 +136,19 @@ async function startPhoneClient() {
   console.log('[Phone] Paired: slot=' + mySlot + ' room=' + roomCode +
               ' peers=' + peers.length + ' iceServers=' + iceServers.length);
 
+  // WR-03: Observe transport.closed so that server-initiated closes (session expiry,
+  // room shutdown, network loss) transition the UI to view-ended instead of leaving
+  // the user stuck on the active view with a stale UI.
+  transport.closed.then(function() {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+    showView('view-ended');
+  }).catch(function() {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+    showView('view-ended');
+  });
+
   // Fan out one unreliable WebRTC data channel to every desktop in the room (PHONE-03).
   // openChannelToPeer triggers onnegotiationneeded which auto-creates and sends the offer.
   peers.forEach(function(p) { openChannelToPeer(p.id); });
@@ -365,6 +378,13 @@ async function handleServerPush(msg) {
     case 'peer-left':
       // Desktop departed — close and remove the matching connection.
       closePeer(msg.payload.peer_id);
+      break;
+
+    // WR-03: Handle server-initiated session end (room closed, timeout, admin kick).
+    case 'session-ended':
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+      showView('view-ended');
       break;
 
     default:
