@@ -1566,6 +1566,135 @@ mod tests {
         );
     }
 
+    // ── Phase 4 Plan 03: heartbeat tests (TDD RED) ─────────────────────────────
+
+    /// After a desktop joins and a phone pairs, handle_heartbeat(phone_id)
+    /// sets that slot's last_heartbeat to Some(_).
+    #[tokio::test]
+    async fn test_heartbeat_updates_last_heartbeat() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("client-D".to_string());
+        let _ = broker.register("phone-H".to_string());
+
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+        let room_code = join_result["payload"]["room_code"].as_str().unwrap().to_string();
+
+        let pair_payload = serde_json::json!({ "token": token });
+        let pair_result = registry.handle_pair("phone-H", &pair_payload, &broker).await;
+        assert_eq!(pair_result["type"], "pair-ack");
+
+        // Before heartbeat: last_heartbeat should be None
+        {
+            let room = registry.rooms.get(&room_code).unwrap();
+            let slot = room.slots[0].as_ref().unwrap();
+            assert!(slot.last_heartbeat.is_none(), "last_heartbeat must be None before first heartbeat");
+        }
+
+        // After heartbeat
+        registry.handle_heartbeat("phone-H");
+
+        // last_heartbeat must now be Some(_)
+        {
+            let room = registry.rooms.get(&room_code).unwrap();
+            let slot = room.slots[0].as_ref().unwrap();
+            assert!(slot.last_heartbeat.is_some(), "last_heartbeat must be Some after handle_heartbeat");
+        }
+    }
+
+    /// A slot whose last_heartbeat is older than timeout appears in phones_missing_heartbeat;
+    /// a slot heartbeated recently does not.
+    #[tokio::test]
+    async fn test_phones_missing_heartbeat_flags_stale() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("client-D".to_string());
+        let _ = broker.register("phone-H".to_string());
+
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+        let room_code = join_result["payload"]["room_code"].as_str().unwrap().to_string();
+
+        let pair_payload = serde_json::json!({ "token": token });
+        registry.handle_pair("phone-H", &pair_payload, &broker).await;
+
+        // Manually set an old last_heartbeat (2 minutes ago) in the slot.
+        {
+            let mut room = registry.rooms.get_mut(&room_code).unwrap();
+            let slot = room.slots[0].as_mut().unwrap();
+            slot.last_heartbeat = Some(std::time::Instant::now() - std::time::Duration::from_secs(120));
+        }
+
+        // A 65-second timeout — our 120s old heartbeat is stale.
+        let stale = registry.phones_missing_heartbeat(std::time::Duration::from_secs(65));
+        assert!(!stale.is_empty(), "stale slot must be reported");
+        assert_eq!(stale[0].3, "phone-H", "stale entry must be phone-H");
+
+        // Recent heartbeat — not stale.
+        registry.handle_heartbeat("phone-H");
+        let fresh = registry.phones_missing_heartbeat(std::time::Duration::from_secs(65));
+        assert!(fresh.is_empty(), "freshly heartbeated slot must not appear in missing list");
+    }
+
+    /// handle_heartbeat_miss sets the slot Disconnected and broadcasts a phone-state
+    /// heartbeat-miss envelope to room desktops; the slot is held (not removed).
+    #[tokio::test]
+    async fn test_heartbeat_miss_marks_disconnected() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let mut rx_d = broker.register("client-D".to_string()).unwrap();
+        let _ = broker.register("phone-H".to_string());
+
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+        let room_code = join_result["payload"]["room_code"].as_str().unwrap().to_string();
+        let slot_id = join_result["payload"]["slot"].as_u64().unwrap() as u8;
+
+        let pair_payload = serde_json::json!({ "token": token });
+        registry.handle_pair("phone-H", &pair_payload, &broker).await;
+
+        // Drain setup events on desktop.
+        while rx_d.try_recv().is_ok() {}
+
+        // Simulate heartbeat miss.
+        registry.handle_heartbeat_miss(&room_code, slot_id, &broker).await;
+
+        // Slot must be Disconnected (not removed — hold window kept).
+        {
+            let room = registry.rooms.get(&room_code).unwrap();
+            let slot = room.slots[(slot_id - 1) as usize].as_ref()
+                .expect("slot must still exist (hold, not evicted)");
+            assert_eq!(slot.status, SlotStatus::Disconnected, "slot must be Disconnected after miss");
+        }
+
+        // Desktop must receive a phone-state / heartbeat-miss message.
+        let msg = rx_d.try_recv().expect("desktop must receive heartbeat-miss notification");
+        let event: serde_json::Value = serde_json::from_slice(&msg).unwrap();
+        assert_eq!(event["type"], "phone-state", "type must be phone-state");
+        assert_eq!(event["payload"]["state"], "heartbeat-miss", "state must be heartbeat-miss");
+    }
+
+    /// handle_heartbeat for an unknown phone_client_id does not panic.
+    #[tokio::test]
+    async fn test_heartbeat_unknown_phone_is_noop() {
+        let registry = make_registry();
+        // Should not panic — just logs a warning.
+        registry.handle_heartbeat("no-such-phone");
+    }
+
     /// Lifecycle broadcast: desktop B disconnects; desktop A receives player-disconnected event.
     #[tokio::test]
     async fn test_lifecycle_broadcast() {
