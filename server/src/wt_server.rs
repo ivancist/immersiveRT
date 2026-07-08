@@ -129,16 +129,9 @@ async fn handle_wt_connection(
     };
 
     let my_id = register_env.from.clone();
-    let mut broker_rx = match broker.register(my_id.clone()) {
-        Ok(rx) => rx,
-        Err(e) => {
-            tracing::warn!(
-                client_id = %my_id,
-                "WT registration rejected: {e}, closing connection"
-            );
-            return Ok(());
-        }
-    };
+    // register() is infallible — replaces any stale entry from a prior dropped connection
+    // and signals it via the alive flag so its cleanup task skips on_client_disconnect.
+    let (mut broker_rx, my_alive) = broker.register(my_id.clone());
     tracing::info!(client_id = %my_id, "WT client registered");
 
     // Main relay loop: race inbound streams from the client against outbound messages
@@ -352,10 +345,16 @@ async fn handle_wt_connection(
         }
     }
 
-    broker.unregister(&my_id);
-    tracing::info!(client_id = %my_id, "WT client unregistered");
-    // Lifecycle event: mark slot Disconnected, broadcast player-disconnected,
-    // spawn hold timer (D-16, D-19, SESS-06). Per D-09: called after broker.unregister.
-    room_registry.on_client_disconnect(&my_id, &broker).await;
+    // Only clean up if this relay task still owns the broker entry.
+    // If alive is false, a newer connection replaced us — that connection owns cleanup.
+    if my_alive.load(std::sync::atomic::Ordering::SeqCst) {
+        broker.unregister(&my_id);
+        tracing::info!(client_id = %my_id, "WT client unregistered");
+        // Lifecycle event: mark slot Disconnected, broadcast player-disconnected,
+        // spawn hold timer (D-16, D-19, SESS-06). Per D-09: called after broker.unregister.
+        room_registry.on_client_disconnect(&my_id, &broker).await;
+    } else {
+        tracing::info!(client_id = %my_id, "WT relay superseded by newer connection, skipping disconnect");
+    }
     Ok(())
 }

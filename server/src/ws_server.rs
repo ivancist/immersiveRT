@@ -156,6 +156,7 @@ where
             // Before registration, inbound messages that are not "register" type are dropped.
             let mut my_id: Option<String> = None;
             let mut broker_rx: Option<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>> = None;
+            let mut my_alive: Option<std::sync::Arc<std::sync::atomic::AtomicBool>> = None;
 
             loop {
                 tokio::select! {
@@ -193,22 +194,14 @@ where
                             }
                         };
                         if envelope.msg_type == "register" {
-                            // Register with broker; subsequent inbound messages route via broker.
+                            // register() is infallible — replaces any stale entry from a
+                            // prior dropped connection and signals it via the alive flag.
                             let id = envelope.from.clone();
-                            match broker.register(id.clone()) {
-                                Ok(rx) => {
-                                    my_id = Some(id.clone());
-                                    broker_rx = Some(rx);
-                                    tracing::info!(client_id = %id, "WS client registered from {addr}");
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        client_id = %id,
-                                        "WS registration rejected from {addr}: {e}, closing connection"
-                                    );
-                                    break;
-                                }
-                            }
+                            let (rx, alive) = broker.register(id.clone());
+                            my_id = Some(id.clone());
+                            broker_rx = Some(rx);
+                            my_alive = Some(alive);
+                            tracing::info!(client_id = %id, "WS client registered from {addr}");
                         } else if my_id.is_none() {
                             // Cannot route without an ID — drop and warn.
                             tracing::warn!(
@@ -357,11 +350,20 @@ where
             }
             tracing::debug!("WS connection from {addr} closed");
             if let Some(id) = &my_id {
-                broker.unregister(id);
-                tracing::info!(client_id = %id, "WS client unregistered");
-                // Lifecycle event: mark slot Disconnected, broadcast player-disconnected,
-                // spawn hold timer (D-16, D-19, SESS-06). Per D-09: called after broker.unregister.
-                room_registry.on_client_disconnect(id, &broker).await;
+                // Only clean up if this relay task still owns the broker entry.
+                // If alive is false, a newer connection replaced us — that connection owns cleanup.
+                let is_owner = my_alive
+                    .as_ref()
+                    .map_or(false, |a| a.load(std::sync::atomic::Ordering::SeqCst));
+                if is_owner {
+                    broker.unregister(id);
+                    tracing::info!(client_id = %id, "WS client unregistered");
+                    // Lifecycle event: mark slot Disconnected, broadcast player-disconnected,
+                    // spawn hold timer (D-16, D-19, SESS-06). Per D-09: called after broker.unregister.
+                    room_registry.on_client_disconnect(id, &broker).await;
+                } else {
+                    tracing::info!(client_id = %id, "WS relay superseded by newer connection, skipping disconnect");
+                }
             }
         }
         Err(e) => {

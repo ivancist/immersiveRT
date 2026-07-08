@@ -384,6 +384,34 @@ impl RoomRegistry {
         .unwrap_or_default();
         self.route_to_phone(&actual_room_code, peer_joined_bytes, broker);
 
+        // Generate ephemeral TURN credentials for the desktop so handleOffer can use TURN.
+        let ice_servers = match generate_turn_credentials(
+            &self.turn_shared_secret,
+            client_id,
+            self.turn_credential_ttl_secs,
+        ) {
+            Ok(creds) => {
+                let coturn_host = self.base_url
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .split(':')
+                    .next()
+                    .unwrap_or("localhost");
+                serde_json::json!([
+                    { "urls": format!("stun:{}:3478", coturn_host) },
+                    {
+                        "urls": format!("turn:{}:3478", coturn_host),
+                        "username": creds.username,
+                        "credential": creds.password
+                    }
+                ])
+            }
+            Err(e) => {
+                tracing::warn!("failed to generate TURN credentials for desktop join: {e}");
+                serde_json::json!([{ "urls": format!("stun:{}", self.base_url.trim_start_matches("https://").trim_start_matches("http://").split(':').next().unwrap_or("localhost")) }])
+            }
+        };
+
         serde_json::json!({
             "type": "join-ack",
             "payload": {
@@ -391,7 +419,8 @@ impl RoomRegistry {
                 "room_code": actual_room_code,
                 "reconnect_token": reconnect_token,
                 "pairing_url": pairing_url,
-                "slots": slots_snapshot
+                "slots": slots_snapshot,
+                "ice_servers": ice_servers
             }
         })
     }
@@ -452,17 +481,29 @@ impl RoomRegistry {
             // the slot is gone and we must reject — otherwise we'd silently corrupt
             // a stale reconnect_tokens entry that future pair attempts would hit.
             if let Some(Some(info)) = room_ref.slots.get_mut(idx) {
-                if info.status != SlotStatus::Disconnected {
+                // Allow reconnect from Disconnected (after heartbeat miss) OR from Connected
+                // (hot reconnect: transport dropped before heartbeat miss fired). The
+                // reconnect_token itself proves identity — invalid/unknown tokens are
+                // already rejected above via reconnect_tokens lookup.
+                if info.status != SlotStatus::Disconnected && info.status != SlotStatus::Connected {
                     return serde_json::json!({
                         "type": "join-error",
                         "payload": {"reason": "slot_not_held"}
                     });
                 }
                 info.client_id = client_id.to_string();
+                info.phone_client_id = Some(client_id.to_string());
                 info.status = SlotStatus::Connected;
             }
         }
         // DashMap RefMut dropped here.
+
+        // Clear player_ready_sent and channel_ready for this phone so WebRTC can
+        // re-handshake if channels closed during the transport gap. Safe to call
+        // even if channels are still open — new rtc-channel-ready messages will
+        // arrive only if the DC actually needs reopening.
+        self.player_ready_sent.remove(&(room_code.clone(), client_id.to_string()));
+        self.channel_ready.retain(|k, _| !(k.0 == room_code && k.1 == client_id));
 
         // Generate fresh reconnect_token and pairing_url (D-17).
         let new_reconnect_token = generate_reconnect_token();
@@ -536,6 +577,34 @@ impl RoomRegistry {
         .unwrap_or_default();
         self.broadcast_to_room(&room_code, client_id, event, broker);
 
+        // Generate ephemeral TURN credentials for the reconnecting desktop.
+        let ice_servers = match generate_turn_credentials(
+            &self.turn_shared_secret,
+            client_id,
+            self.turn_credential_ttl_secs,
+        ) {
+            Ok(creds) => {
+                let coturn_host = self.base_url
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .split(':')
+                    .next()
+                    .unwrap_or("localhost");
+                serde_json::json!([
+                    { "urls": format!("stun:{}:3478", coturn_host) },
+                    {
+                        "urls": format!("turn:{}:3478", coturn_host),
+                        "username": creds.username,
+                        "credential": creds.password
+                    }
+                ])
+            }
+            Err(e) => {
+                tracing::warn!("failed to generate TURN credentials for desktop reconnect: {e}");
+                serde_json::json!([{ "urls": "stun:localhost:3478" }])
+            }
+        };
+
         serde_json::json!({
             "type": "join-ack",
             "payload": {
@@ -543,7 +612,8 @@ impl RoomRegistry {
                 "room_code": room_code,
                 "reconnect_token": new_reconnect_token,
                 "pairing_url": pairing_url,
-                "slots": slots_snapshot
+                "slots": slots_snapshot,
+                "ice_servers": ice_servers
             }
         })
     }
@@ -1696,8 +1766,8 @@ mod tests {
         let registry = make_registry();
         let broker = SignalingBroker::new();
 
-        let mut rx_d = broker.register("client-D".to_string()).unwrap();
-        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+        let mut rx_d = broker.register("client-D".to_string()).0;
+        let mut rx_p = broker.register("phone-P".to_string()).0;
 
         setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
 
@@ -1737,8 +1807,8 @@ mod tests {
         let registry = make_registry();
         let broker = SignalingBroker::new();
 
-        let mut rx_d = broker.register("client-D".to_string()).unwrap();
-        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+        let mut rx_d = broker.register("client-D".to_string()).0;
+        let mut rx_p = broker.register("phone-P".to_string()).0;
 
         setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
 
@@ -1761,8 +1831,8 @@ mod tests {
         let registry = make_registry();
         let broker = SignalingBroker::new();
 
-        let mut rx_d = broker.register("client-D".to_string()).unwrap();
-        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+        let mut rx_d = broker.register("client-D".to_string()).0;
+        let mut rx_p = broker.register("phone-P".to_string()).0;
 
         setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
 
@@ -1791,9 +1861,9 @@ mod tests {
         let registry = make_registry();
         let broker = SignalingBroker::new();
 
-        let mut rx_d1 = broker.register("client-D1".to_string()).unwrap();
-        let mut rx_d2 = broker.register("client-D2".to_string()).unwrap();
-        let mut rx_p  = broker.register("phone-P".to_string()).unwrap();
+        let mut rx_d1 = broker.register("client-D1".to_string()).0;
+        let mut rx_d2 = broker.register("client-D2".to_string()).0;
+        let mut rx_p  = broker.register("phone-P".to_string()).0;
 
         // Desktop-1 creates room.
         let join1 = serde_json::json!({"username": "Alice", "room_code": "", "game_type": "demo"});
@@ -1881,8 +1951,8 @@ mod tests {
         let registry = make_registry();
         let broker = SignalingBroker::new();
 
-        let mut rx_d = broker.register("client-D".to_string()).unwrap();
-        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+        let mut rx_d = broker.register("client-D".to_string()).0;
+        let mut rx_p = broker.register("phone-P".to_string()).0;
 
         setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
         while rx_d.try_recv().is_ok() {}
@@ -1907,7 +1977,7 @@ mod tests {
         let registry = make_registry();
         let broker = SignalingBroker::new();
 
-        let mut rx_d = broker.register("client-D".to_string()).unwrap();
+        let mut rx_d = broker.register("client-D".to_string()).0;
         let _ = broker.register("phone-P".to_string());
 
         setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
@@ -1931,7 +2001,7 @@ mod tests {
         let broker = SignalingBroker::new();
 
         let _ = broker.register("client-D1".to_string());
-        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+        let mut rx_p = broker.register("phone-P".to_string()).0;
         let _ = broker.register("client-D2".to_string());
 
         setup_one_desktop_one_phone(&registry, &broker, "client-D1", "phone-P").await;
@@ -1961,7 +2031,7 @@ mod tests {
         let registry = make_registry();
         let broker = SignalingBroker::new();
 
-        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+        let mut rx_p = broker.register("phone-P".to_string()).0;
         let _ = broker.register("client-D".to_string());
 
         setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
@@ -2061,7 +2131,7 @@ mod tests {
     async fn test_heartbeat_miss_marks_disconnected() {
         let registry = make_registry();
         let broker = SignalingBroker::new();
-        let mut rx_d = broker.register("client-D".to_string()).unwrap();
+        let mut rx_d = broker.register("client-D".to_string()).0;
         let _ = broker.register("phone-H".to_string());
 
         let join_payload = serde_json::json!({
@@ -2112,7 +2182,7 @@ mod tests {
         let broker = SignalingBroker::new();
 
         // Register both clients and capture A's receiver.
-        let mut rx_a = broker.register("client-A".to_string()).unwrap();
+        let mut rx_a = broker.register("client-A".to_string()).0;
         let _ = broker.register("client-B".to_string());
 
         // Both join.

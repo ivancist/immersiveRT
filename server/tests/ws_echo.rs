@@ -19,6 +19,7 @@ async fn test_ws_echo() {
         "http://localhost".to_string(),
         60,
         90,
+        86400,
     ));
     tokio::spawn(immersive_rt_server::ws_server::run_with_listener(
         listener,

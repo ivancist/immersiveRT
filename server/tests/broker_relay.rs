@@ -23,6 +23,7 @@ async fn test_broker_relay_ws() {
         "http://localhost".to_string(),
         60,
         90,
+        86400,
     ));
     tokio::spawn(immersive_rt_server::ws_server::run_with_listener(
         listener,

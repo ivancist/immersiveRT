@@ -524,7 +524,8 @@ async function attemptReconnect() {
 
       var toReopen = [];
       peerConnections.forEach(function(entry, peerId) {
-        if (entry.dc.readyState === 'closed' || entry.dc.readyState === 'closing') {
+        if (entry.dc.readyState === 'closed' || entry.dc.readyState === 'closing' ||
+            entry.pc.connectionState === 'failed') {
           toReopen.push(peerId);
         }
       });
@@ -574,6 +575,14 @@ function openChannelToPeer(peerId) {
   pc.onconnectionstatechange = function() {
     phoneLog('conn=' + pc.connectionState + ' p=' + ptag);
     console.info('[WebRTC] connectionState=' + pc.connectionState + ' peer=' + ptag);
+    if (pc.connectionState === 'failed') {
+      // Mark channel as lost so reconnect logic reopens it.
+      if (channelIsOpen) {
+        channelIsOpen = false;
+        if (openChannelCount > 0) { openChannelCount--; }
+        updateConnectingUI();
+      }
+    }
   };
   pc.oniceconnectionstatechange = function() {
     phoneLog('ice=' + pc.iceConnectionState + ' p=' + ptag);
@@ -783,7 +792,8 @@ document.addEventListener('visibilitychange', function() {
     signalSend('heartbeat', '', {});
     requestWakeLock();
     peerConnections.forEach(function(entry, peerId) {
-      if (entry.dc.readyState === 'closed' || entry.dc.readyState === 'closing') {
+      if (entry.dc.readyState === 'closed' || entry.dc.readyState === 'closing' ||
+          entry.pc.connectionState === 'failed') {
         peerConnections.delete(peerId);
         openChannelToPeer(peerId);
       }
