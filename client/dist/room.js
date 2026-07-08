@@ -18,6 +18,10 @@ let pendingUsername = null;   // username sent with join-room, used in handleJoi
 // WebRTC state — desktop side (Phase 4 Plan 02: minimal answerer for PHONE-03)
 var desktopPeers = new Map(); // phoneId → RTCPeerConnection
 
+// Diagnostic: set true to force TURN-relay-only ICE (bypasses direct LAN path).
+// Useful to isolate whether DTLS failure is specific to the direct host-to-host path.
+var DEBUG_FORCE_RELAY = false;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
@@ -200,6 +204,15 @@ function onServerMessage(msg) {
     case 'player-ready':
       handlePlayerReady(msg);
       break;
+    case 'phone-state':
+      if (msg.payload && msg.payload.state === 'heartbeat-miss') {
+        console.info('[Server] heartbeat-miss slot=' + msg.payload.slot);
+      }
+      break;
+    case 'room-event':
+      console.info('[Server] room-event:', msg.payload && msg.payload.event,
+                   'slot=' + (msg.payload && msg.payload.slot));
+      break;
     default:
       console.warn('[WS] Unknown message type:', msg.type);
   }
@@ -211,13 +224,27 @@ function onServerMessage(msg) {
 // ──────────────────────────────────────────────────────────────────────────────
 function handleOffer(msg) {
   var phoneId = msg.from;
-  var pc = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:' + location.hostname + ':3478' }]
-  });
+  var tag = phoneId.slice(0, 8);
+  var iceConfig = {
+    iceServers: (currentRoom && currentRoom.iceServers) || [{ urls: 'stun:' + location.hostname + ':3478' }]
+  };
+  if (DEBUG_FORCE_RELAY) { iceConfig.iceTransportPolicy = 'relay'; }
+  var pc = new RTCPeerConnection(iceConfig);
+
+  pc.onconnectionstatechange = function() {
+    console.info('[WebRTC] connectionState=' + pc.connectionState + ' phone=' + tag);
+  };
+  pc.oniceconnectionstatechange = function() {
+    console.info('[WebRTC] iceConnectionState=' + pc.iceConnectionState + ' phone=' + tag);
+  };
+  pc.onicegatheringstatechange = function() {
+    console.info('[WebRTC] iceGatheringState=' + pc.iceGatheringState + ' phone=' + tag);
+  };
 
   pc.ondatachannel = function(evt) {
     var dc = evt.channel;
     dc.onopen = function() {
+      console.info('[WebRTC] data channel open phone=' + tag);
       sendMessage('rtc-channel-ready', { with: phoneId });
     };
   };
@@ -230,9 +257,22 @@ function handleOffer(msg) {
   desktopPeers.set(phoneId, pc);
 
   pc.setRemoteDescription(msg.payload)
-    .then(function() { return pc.setLocalDescription(); })
     .then(function() {
-      sendTo('answer', phoneId, pc.localDescription);
+      var offerSetup = (msg.payload && msg.payload.sdp || '').match(/a=setup:(\S+)/);
+      console.info('[WebRTC] offer a=setup:' + (offerSetup ? offerSetup[1] : 'not found') + ' phone=' + tag);
+      return pc.createAnswer();
+    })
+    .then(function(answer) {
+      // iOS Safari ≥18 silently ignores DTLS ClientHello when it is forced into the passive
+      // role (i.e. remote a=setup:active). Flip desktop to passive so Safari (which sent
+      // actpass) must be the DTLS client and initiates the handshake instead.
+      var patchedSdp = answer.sdp.replace(/a=setup:active/g, 'a=setup:passive');
+      var patchedAnswer = { type: 'answer', sdp: patchedSdp };
+      console.info('[WebRTC] answer a=setup:passive (patched for iOS Safari) phone=' + tag);
+      return pc.setLocalDescription(patchedAnswer).then(function() { return patchedAnswer; });
+    })
+    .then(function(patchedAnswer) {
+      sendTo('answer', phoneId, patchedAnswer);
     })
     .catch(function(err) {
       console.warn('[WebRTC] handleOffer failed for phone', phoneId, ':', err);
@@ -445,7 +485,7 @@ function handleJoinAck(payload) {
   }
   localStorage.setItem('token_' + roomCode + '_' + slot, reconnectToken);
 
-  currentRoom = { slot: slot, room_code: roomCode };
+  currentRoom = { slot: slot, room_code: roomCode, iceServers: payload.ice_servers || null };
 
   // Navigate to room URL — ONLY here, never before server approval (D-07)
   history.pushState({ slot: slot, room_code: roomCode }, '', '/room/' + roomCode);
