@@ -256,6 +256,13 @@ async fn handle_wt_connection(
                                 room_registry.handle_heartbeat(&envelope.from);
                                 let _ = send.finish().await;
                             }
+                            "phone-state" => {
+                                // Relay phone state transitions to all room desktops (D-17/D-18).
+                                room_registry
+                                    .handle_phone_state(&envelope.from, &envelope.payload, &broker)
+                                    .await;
+                                let _ = send.finish().await;
+                            }
                             _ => {
                                 // Re-serialize the envelope to forward its bytes via the broker.
                                 let payload = match serde_json::to_vec(&envelope) {

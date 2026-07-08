@@ -341,6 +341,22 @@ impl RoomRegistry {
         .unwrap_or_default();
         self.broadcast_to_room(&actual_room_code, client_id, event, broker);
 
+        // Push peer-joined to the phone (D-06): if a phone is already paired in this room,
+        // notify it that a new desktop joined so it can open a WebRTC channel.
+        // route_to_phone is a safe no-op when no phone_client_id is set.
+        let peer_joined_bytes = serde_json::to_vec(&serde_json::json!({
+            "type": "peer-joined",
+            "payload": {
+                "peer": {
+                    "id": client_id,
+                    "slot": slot_id,
+                    "username": username_trimmed
+                }
+            }
+        }))
+        .unwrap_or_default();
+        self.route_to_phone(&actual_room_code, peer_joined_bytes, broker);
+
         serde_json::json!({
             "type": "join-ack",
             "payload": {
@@ -702,6 +718,16 @@ impl RoomRegistry {
         .unwrap_or_default();
         self.broadcast_to_room(&room_code, client_id, event, broker);
 
+        // Push peer-left to the phone (D-07): notify the phone that this desktop left
+        // so it can close the matching RTCPeerConnection.
+        // Only push if a phone is paired; route_to_phone is a safe no-op otherwise.
+        let peer_left_bytes = serde_json::to_vec(&serde_json::json!({
+            "type": "peer-left",
+            "payload": { "peer_id": client_id }
+        }))
+        .unwrap_or_default();
+        self.route_to_phone(&room_code, peer_left_bytes, broker);
+
         // Spawn hold timer (Pattern 3 — per-slot JoinHandle, cancel-safe).
         let registry = self.clone();
         let broker_clone = broker.clone();
@@ -791,6 +817,14 @@ impl RoomRegistry {
         }))
         .unwrap_or_default();
         self.broadcast_to_room(&room_code, client_id, event, broker);
+
+        // Push peer-left to the phone (D-07) on explicit leave as well.
+        let peer_left_bytes = serde_json::to_vec(&serde_json::json!({
+            "type": "peer-left",
+            "payload": { "peer_id": client_id }
+        }))
+        .unwrap_or_default();
+        self.route_to_phone(&room_code, peer_left_bytes, broker);
 
         tracing::info!(
             room_code = %room_code, slot_id = %slot_id,
@@ -997,6 +1031,81 @@ impl RoomRegistry {
         self.broadcast_to_room(&room_code, "", player_ready_bytes.clone(), broker);
         // Route to the phone as well.
         self.route_to_phone(&room_code, player_ready_bytes, broker);
+    }
+
+    /// Handle a `phone-state` message from a phone client (D-17/D-18).
+    ///
+    /// Locates the room containing the phone's slot, builds a `phone-state` envelope
+    /// carrying the `state` (and `with` if present), then relays it to all Connected
+    /// desktops via `broadcast_to_room`. Never echoes back to the phone.
+    pub async fn handle_phone_state(
+        &self,
+        sender_id: &str,
+        payload: &serde_json::Value,
+        broker: &SignalingBroker,
+    ) {
+        // Defensive extraction: ignore unknown/malformed payloads (T-04-09 mitigation).
+        let state = match payload["state"].as_str() {
+            Some(s) => s.to_string(),
+            None => {
+                tracing::warn!(sender_id = %sender_id, "phone-state: missing 'state' field");
+                return;
+            }
+        };
+
+        // Optional `with` field (present for channel-lost / channel-recovered).
+        let with_field = payload["with"].as_str().map(|s| s.to_string());
+
+        // Locate the room and slot for this phone (collect-then-drop).
+        let room_and_slot: Option<(RoomCode, SlotId)> = {
+            let mut found = None;
+            'outer: for room_ref in self.rooms.iter() {
+                let room = room_ref.value();
+                for (idx, slot_opt) in room.slots.iter().enumerate() {
+                    if let Some(slot) = slot_opt {
+                        if slot.phone_client_id.as_deref() == Some(sender_id) {
+                            found = Some((room.code.clone(), (idx + 1) as u8));
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+            found
+        };
+        // All DashMap Refs dropped here.
+
+        let (room_code, slot_id) = match room_and_slot {
+            Some(v) => v,
+            None => {
+                tracing::warn!(
+                    sender_id = %sender_id,
+                    "phone-state: phone not found in any room"
+                );
+                return;
+            }
+        };
+
+        // Build the relay envelope with optional `with` field.
+        let relay_payload = if let Some(ref w) = with_field {
+            serde_json::json!({ "state": state, "slot": slot_id, "with": w })
+        } else {
+            serde_json::json!({ "state": state, "slot": slot_id })
+        };
+
+        let event_bytes = match serde_json::to_vec(&serde_json::json!({
+            "type": "phone-state",
+            "payload": relay_payload
+        })) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!("phone-state: failed to serialize relay envelope: {e}");
+                return;
+            }
+        };
+
+        // Relay to all Connected desktops; exclude the phone (broadcast_to_room filters
+        // to SlotStatus::Connected desktop client_ids, never to phone_client_id).
+        self.broadcast_to_room(&room_code, sender_id, event_bytes, broker);
     }
 
     /// Update the heartbeat timestamp for the slot whose `phone_client_id` matches.

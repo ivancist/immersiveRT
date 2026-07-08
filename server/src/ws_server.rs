@@ -284,6 +284,17 @@ where
                                     room_registry.handle_heartbeat(&envelope.from);
                                     // No ack body for heartbeat.
                                 }
+                                "phone-state" => {
+                                    // Relay phone state transitions to all room desktops (D-17/D-18).
+                                    room_registry
+                                        .handle_phone_state(
+                                            &envelope.from,
+                                            &envelope.payload,
+                                            &broker,
+                                        )
+                                        .await;
+                                    // Fire-and-forget: no response to the phone.
+                                }
                                 _ => {
                                     // Existing broker routing (offer, answer, ice-candidate, etc.)
                                     // Route to the target client; caller logs the warning per D-05.
