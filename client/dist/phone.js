@@ -355,6 +355,11 @@ async function handleServerPush(msg) {
     // ── Dynamic peer mesh (D-06/D-07) ──
     case 'peer-joined':
       // Server pushed a new desktop — grow the WebRTC mesh.
+      // WR-02: guard against malformed payload to prevent silent TypeError.
+      if (!msg.payload || !msg.payload.peer || typeof msg.payload.peer.id !== 'string') {
+        console.warn('[WT] peer-joined: malformed payload', msg.payload);
+        break;
+      }
       openChannelToPeer(msg.payload.peer.id);
       break;
     case 'peer-left':
