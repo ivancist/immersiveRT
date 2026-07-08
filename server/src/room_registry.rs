@@ -1717,6 +1717,110 @@ mod tests {
         );
     }
 
+    // ── Phase 4 Plan 03: phone-state relay and peer-mesh tests (TDD RED) ────────
+
+    /// handle_phone_state(phone_id, {state:"background"}) broadcasts phone-state to
+    /// all Connected desktops in the phone's room; does NOT echo to the phone itself.
+    #[tokio::test]
+    async fn test_phone_state_relays_to_desktops() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d = broker.register("client-D".to_string()).unwrap();
+        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+        while rx_d.try_recv().is_ok() {}
+        while rx_p.try_recv().is_ok() {}
+
+        let payload = serde_json::json!({ "state": "background" });
+        registry.handle_phone_state("phone-P", &payload, &broker).await;
+
+        // Desktop must receive the relayed event.
+        let msg = rx_d.try_recv().expect("desktop must receive phone-state relay");
+        let event: serde_json::Value = serde_json::from_slice(&msg).unwrap();
+        assert_eq!(event["type"], "phone-state");
+        assert_eq!(event["payload"]["state"], "background");
+
+        // Phone must NOT receive its own state back (D-18).
+        assert!(rx_p.try_recv().is_err(), "phone must not receive echo of its own state");
+    }
+
+    /// phone-state with {state:"channel-lost", with: desktop_id} preserves the `with` field.
+    #[tokio::test]
+    async fn test_phone_state_channel_lost_includes_with() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d = broker.register("client-D".to_string()).unwrap();
+        let _ = broker.register("phone-P".to_string());
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+        while rx_d.try_recv().is_ok() {}
+
+        let payload = serde_json::json!({ "state": "channel-lost", "with": "client-D" });
+        registry.handle_phone_state("phone-P", &payload, &broker).await;
+
+        let msg = rx_d.try_recv().expect("desktop must receive channel-lost relay");
+        let event: serde_json::Value = serde_json::from_slice(&msg).unwrap();
+        assert_eq!(event["type"], "phone-state");
+        assert_eq!(event["payload"]["state"], "channel-lost");
+        assert_eq!(event["payload"]["with"], "client-D", "`with` field must be preserved");
+    }
+
+    /// When a second desktop joins a room with a paired phone, a peer-joined envelope
+    /// is routed to the phone.
+    #[tokio::test]
+    async fn test_peer_joined_push_to_phone() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let _ = broker.register("client-D1".to_string());
+        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+        let _ = broker.register("client-D2".to_string());
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D1", "phone-P").await;
+        while rx_p.try_recv().is_ok() {}
+
+        // Second desktop joins the same room — should push peer-joined to phone.
+        let room = {
+            // Peek at the room_code
+            registry.rooms.iter().next().map(|r| r.code.clone()).unwrap()
+        };
+        let join2 = serde_json::json!({
+            "username": "Bob", "room_code": room, "game_type": "demo"
+        });
+        registry.handle_join("client-D2", &join2, &broker).await;
+
+        // Phone must receive a peer-joined event.
+        let msg = rx_p.try_recv().expect("phone must receive peer-joined when second desktop joins");
+        let event: serde_json::Value = serde_json::from_slice(&msg).unwrap();
+        assert_eq!(event["type"], "peer-joined");
+        assert_eq!(event["payload"]["peer"]["id"], "client-D2");
+    }
+
+    /// When a desktop disconnects from a room with a paired phone, a peer-left envelope
+    /// is routed to the phone.
+    #[tokio::test]
+    async fn test_peer_left_push_to_phone() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_p = broker.register("phone-P".to_string()).unwrap();
+        let _ = broker.register("client-D".to_string());
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+        while rx_p.try_recv().is_ok() {}
+
+        // Desktop disconnects — should push peer-left to phone.
+        registry.on_client_disconnect("client-D", &broker).await;
+
+        let msg = rx_p.try_recv().expect("phone must receive peer-left when desktop disconnects");
+        let event: serde_json::Value = serde_json::from_slice(&msg).unwrap();
+        assert_eq!(event["type"], "peer-left");
+        assert_eq!(event["payload"]["peer_id"], "client-D");
+    }
+
     // ── Phase 4 Plan 03: heartbeat tests (TDD RED) ─────────────────────────────
 
     /// After a desktop joins and a phone pairs, handle_heartbeat(phone_id)
