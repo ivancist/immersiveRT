@@ -184,6 +184,13 @@ async function sendWtMessage(transport, envelope) {
 // The offer is produced by onnegotiationneeded + setLocalDescription (no manual
 // createOffer call — RESEARCH Pattern 3, anti-pattern: do not call createOffer manually).
 function openChannelToPeer(peerId) {
+  // CR-03: Detect reconnect BEFORE peerConnections.set overwrites the entry.
+  // dc.onopen fires asynchronously — by then the entry is already overwritten,
+  // so the previous readyState check inside onopen was always false (D-17).
+  var prev = peerConnections.get(peerId);
+  var isRecovery = prev && prev.dc &&
+    (prev.dc.readyState === 'closed' || prev.dc.readyState === 'closing');
+
   var pc = new RTCPeerConnection({ iceServers: iceServers });
   // D-05 locked: both options must be present and exactly these values.
   var dc = pc.createDataChannel('sensor', { ordered: false, maxRetransmits: 0 });
@@ -219,11 +226,9 @@ function openChannelToPeer(peerId) {
       console.warn('[WebRTC] rtc-channel-ready send failed:', err);
     });
     // If this peer was previously lost and we re-opened the channel, notify recovery (D-17).
-    if (peerConnections.has(peerId)) {
-      var existing = peerConnections.get(peerId);
-      if (existing && existing.dc && (existing.dc.readyState === 'closed' || existing.dc.readyState === 'closing')) {
-        sendPhoneState({ state: 'channel-recovered', with: peerId });
-      }
+    // isRecovery was captured synchronously before peerConnections.set overwrote the entry.
+    if (isRecovery) {
+      sendPhoneState({ state: 'channel-recovered', with: peerId });
     }
   };
 
