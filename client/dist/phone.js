@@ -194,6 +194,9 @@ function openChannelToPeer(peerId) {
   var pc = new RTCPeerConnection({ iceServers: iceServers });
   // D-05 locked: both options must be present and exactly these values.
   var dc = pc.createDataChannel('sensor', { ordered: false, maxRetransmits: 0 });
+  // WR-01: tracks whether this channel reached open so dc.onclose can guard
+  // against double-decrement (e.g. closePeer + unexpected close).
+  var channelIsOpen = false;
 
   pc.onnegotiationneeded = function() {
     pc.setLocalDescription()  // no args — auto-creates offer and sets local description
@@ -217,6 +220,7 @@ function openChannelToPeer(peerId) {
   };
 
   dc.onopen = function() {
+    channelIsOpen = true;  // WR-01
     openChannelCount++;
     updateConnectingUI();
     // Notify server that this channel is open (D-08 phone half).
@@ -233,6 +237,14 @@ function openChannelToPeer(peerId) {
   };
 
   dc.onclose = function() {
+    // WR-01: only decrement if the channel actually reached open state; guards against
+    // double-decrement when dc.onclose fires after an intentional close that already
+    // decremented in closePeer.
+    if (channelIsOpen) {
+      channelIsOpen = false;
+      if (openChannelCount > 0) { openChannelCount--; }
+      updateConnectingUI();
+    }
     // Notify server and room desktops that this channel was lost (D-17).
     sendPhoneState({ state: 'channel-lost', with: peerId });
   };
@@ -416,12 +428,12 @@ function startMotionIndicator() {
 }
 
 // D-06/D-07: close and remove a peer connection from the mesh.
+// WR-01: openChannelCount decrement is handled by dc.onclose (guarded by channelIsOpen).
 function closePeer(peerId) {
   var entry = peerConnections.get(peerId);
   if (!entry) { return; }
   try { entry.pc.close(); } catch (e) { /* already closed */ }
   peerConnections.delete(peerId);
-  if (openChannelCount > 0) { openChannelCount--; }
   updateConnectingUI();
 }
 
