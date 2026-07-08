@@ -218,10 +218,18 @@ function openChannelToPeer(peerId) {
     }).catch(function(err) {
       console.warn('[WebRTC] rtc-channel-ready send failed:', err);
     });
+    // If this peer was previously lost and we re-opened the channel, notify recovery (D-17).
+    if (peerConnections.has(peerId)) {
+      var existing = peerConnections.get(peerId);
+      if (existing && existing.dc && (existing.dc.readyState === 'closed' || existing.dc.readyState === 'closing')) {
+        sendPhoneState({ state: 'channel-recovered', with: peerId });
+      }
+    }
   };
 
   dc.onclose = function() {
-    // TODO(04-03): closePeer(peerId) — channel reconnect/state notification
+    // Notify server and room desktops that this channel was lost (D-17).
+    sendPhoneState({ state: 'channel-lost', with: peerId });
   };
 
   peerConnections.set(peerId, { pc: pc, dc: dc });
@@ -259,9 +267,12 @@ function onPlayerReady(msg) {
     dotEl.classList.add('dot--connected');
   }
 
-  // TODO(04-03): requestWakeLock()
-  // TODO(04-03): startHeartbeat()
-  // TODO(04-03): startMotionIndicator()
+  // Wake Lock after player-ready (D-15 — never during connecting).
+  requestWakeLock();
+  // Heartbeat every 5s so the server never prematurely evicts this slot (D-19, PHONE-06).
+  startHeartbeat();
+  // Motion indicator for devicemotion magnitude (D-11 / UI-SPEC).
+  startMotionIndicator();
 }
 
 // ── Server push listener ──────────────────────────────────────────────────────
@@ -324,18 +335,109 @@ async function handleServerPush(msg) {
       await entry.pc.addIceCandidate(msg.payload);
       break;
 
-    // ── Plan 03 stubs ──
+    // ── Dynamic peer mesh (D-06/D-07) ──
     case 'peer-joined':
-      // TODO(04-03): openChannelToPeer(msg.payload.peer.id)
+      // Server pushed a new desktop — grow the WebRTC mesh.
+      openChannelToPeer(msg.payload.peer.id);
       break;
     case 'peer-left':
-      // TODO(04-03): closePeer(msg.payload.peer_id)
+      // Desktop departed — close and remove the matching connection.
+      closePeer(msg.payload.peer_id);
       break;
 
     default:
       console.warn('[WT] Unknown server push type:', msg.type);
   }
 }
+
+// ── Session durability (Plan 03) ─────────────────────────────────────────────
+
+// D-15/D-16 Wake Lock: keep the screen on after player-ready.
+// Feature-detected — older Safari (pre-16.4) lacks navigator.wakeLock.
+// Rejection is swallowed (Pitfall 4 — low battery / power-save mode).
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator)) { return; } // graceful degradation
+  try {
+    wakeLockSentinel = await navigator.wakeLock.request('screen');
+    wakeLockSentinel.addEventListener('release', function() {
+      sendPhoneState({ state: 'wake-lock-lost' });
+      wakeLockSentinel = null;
+    });
+    sendPhoneState({ state: 'wake-lock-active' });
+  } catch (err) {
+    // Low battery / power-save / document not visible — silently degrade.
+    console.debug('[WakeLock] Request rejected:', err.message);
+  }
+}
+
+// D-19 Heartbeat: send every 5s so server knows the phone is still alive (PHONE-06).
+function startHeartbeat() {
+  heartbeatInterval = setInterval(function() {
+    sendWtMessage(transport, { type: 'heartbeat', from: myId, to: '', payload: {} });
+  }, 5000);
+}
+
+// D-17 Phone state: relay a state transition to the server (server relays to desktops).
+function sendPhoneState(statePayload) {
+  sendWtMessage(transport, { type: 'phone-state', from: myId, to: '', payload: statePayload });
+}
+
+// D-11 / UI-SPEC: pulse the motion-indicator element when acceleration magnitude exceeds
+// 0.5 m/s² (linear) or differs from ~1G (gravity-inclusive). Return to idle after 300ms.
+var _motionIndicatorTimer = null;
+function startMotionIndicator() {
+  window.addEventListener('devicemotion', function(e) {
+    // Prefer linear_acceleration (gravity-subtracted); fall back to accelerationIncludingGravity.
+    var a = e.accelerationIncludingGravity;
+    if (!a) { return; }
+    var mag = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+    var indicator = document.getElementById('motion-indicator');
+    if (!indicator) { return; }
+
+    // Threshold: magnitude > 0.5 m/s² above ~1G (gravity ~9.8) = 10.3; use 10.3 to match spec.
+    // UI-SPEC specifies linear-acceleration > 0.5 m/s²; since we use gravity-inclusive,
+    // 9.8 (rest) + 0.5 = 10.3. Toggle active when phone is in motion above this threshold.
+    if (mag > 10.3) {
+      indicator.classList.add('motion-active');
+      clearTimeout(_motionIndicatorTimer);
+      _motionIndicatorTimer = setTimeout(function() {
+        indicator.classList.remove('motion-active');
+      }, 300);
+    }
+  });
+}
+
+// D-06/D-07: close and remove a peer connection from the mesh.
+function closePeer(peerId) {
+  var entry = peerConnections.get(peerId);
+  if (!entry) { return; }
+  try { entry.pc.close(); } catch (e) { /* already closed */ }
+  peerConnections.delete(peerId);
+  if (openChannelCount > 0) { openChannelCount--; }
+  updateConnectingUI();
+}
+
+// D-16 self-heal + state reporting on visibility change.
+// On foreground: resend heartbeat, re-request Wake Lock, re-open any closed channels.
+// On background: notify server the phone is backgrounded.
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible') {
+    sendPhoneState({ state: 'foreground' });
+    // Immediate heartbeat on foreground return resets the 65s server timer (D-19).
+    sendWtMessage(transport, { type: 'heartbeat', from: myId, to: '', payload: {} });
+    // Re-acquire Wake Lock (released automatically when tab goes to background).
+    requestWakeLock();
+    // Re-open any channels that closed while backgrounded (D-16 self-heal).
+    peerConnections.forEach(function(entry, peerId) {
+      if (entry.dc.readyState === 'closed' || entry.dc.readyState === 'closing') {
+        peerConnections.delete(peerId);
+        openChannelToPeer(peerId);
+      }
+    });
+  } else {
+    sendPhoneState({ state: 'background' });
+  }
+});
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
