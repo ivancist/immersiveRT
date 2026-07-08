@@ -148,6 +148,13 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "10".into())
         .parse()
         .map_err(|e| anyhow::anyhow!("HEARTBEAT_MONITOR_INTERVAL_SECS must be a valid u64 (seconds): {e}"))?;
+    // WR-05: TURN_CREDENTIAL_TTL_SECS — TTL for ephemeral TURN credentials generated at pair time.
+    // Must be longer than pairing_ttl_secs to ensure credentials are still valid when a second
+    // desktop joins after the initial pairing window. Default 3600 s (1 hour).
+    let turn_credential_ttl_secs: u64 = std::env::var("TURN_CREDENTIAL_TTL_SECS")
+        .unwrap_or_else(|_| "3600".into())
+        .parse()
+        .map_err(|e| anyhow::anyhow!("TURN_CREDENTIAL_TTL_SECS must be a valid u64 (seconds): {e}"))?;
 
     // T-03-07: log base_url (public, safe) but NOT pairing_token_secret value.
     tracing::info!(
@@ -176,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
         base_url,
         hold_ttl_secs,
         pairing_ttl_secs,
+        turn_credential_ttl_secs,
     ));
 
     // Start the heartbeat monitor before the server accept loops (D-19, PHONE-06).

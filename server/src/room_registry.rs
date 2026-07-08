@@ -90,6 +90,10 @@ pub struct RoomRegistry {
     base_url: String,
     hold_ttl_secs: u64,
     pairing_ttl_secs: u64,
+    /// TTL for ephemeral TURN credentials generated at pair time (WR-05).
+    /// Defaults to 3600 s (1 h) — much longer than pairing_ttl_secs (90 s) so
+    /// credentials remain valid for late-joining desktops triggering peer-joined events.
+    turn_credential_ttl_secs: u64,
     /// Tracks two-sided WebRTC channel readiness (Plan 02, D-08/D-09).
     /// Key: (room_code, phone_client_id, desktop_client_id)
     /// Value: (phone_confirmed, desktop_confirmed)
@@ -106,6 +110,7 @@ impl RoomRegistry {
         base_url: String,
         hold_ttl_secs: u64,
         pairing_ttl_secs: u64,
+        turn_credential_ttl_secs: u64,
     ) -> Self {
         Self {
             rooms: Arc::new(DashMap::new()),
@@ -117,6 +122,7 @@ impl RoomRegistry {
             base_url,
             hold_ttl_secs,
             pairing_ttl_secs,
+            turn_credential_ttl_secs,
             channel_ready: Arc::new(DashMap::new()),
             player_ready_sent: Arc::new(DashMap::new()),
         }
@@ -620,11 +626,13 @@ impl RoomRegistry {
         // DashMap Ref dropped here.
 
         // Step 3: Generate ephemeral TURN credentials for the phone.
-        // Use pairing_ttl_secs as the TURN TTL to avoid short-lived credentials (Pitfall 5).
+        // WR-05: use turn_credential_ttl_secs (default 3600 s) rather than
+        // pairing_ttl_secs (default 90 s) so credentials remain valid for
+        // late peer-joined connections triggered long after initial pairing.
         let creds = match generate_turn_credentials(
             &self.turn_shared_secret,
             phone_client_id,
-            self.pairing_ttl_secs,
+            self.turn_credential_ttl_secs,
         ) {
             Ok(c) => c,
             Err(e) => {
@@ -1310,8 +1318,9 @@ mod tests {
             "test-pairing-secret".to_string(),
             "turn-secret".to_string(),           // turn_shared_secret (fixed for tests)
             "https://localhost:8443".to_string(),
-            60,  // hold_ttl_secs
-            300, // pairing_ttl_secs
+            60,   // hold_ttl_secs
+            300,  // pairing_ttl_secs
+            3600, // turn_credential_ttl_secs
         )
     }
 
@@ -1438,8 +1447,9 @@ mod tests {
             "sec".to_string(),
             "turn-secret".to_string(),
             "https://localhost:8443".to_string(),
-            0,   // hold_ttl = 0 → fires as soon as awaited
+            0,    // hold_ttl = 0 → fires as soon as awaited
             300,
+            3600,
         );
         let broker = SignalingBroker::new();
         let _ = broker.register("client-A".to_string());
@@ -1492,8 +1502,9 @@ mod tests {
             "sec".to_string(),
             "turn-secret".to_string(),
             "https://localhost:8443".to_string(),
-            0,   // hold_ttl = 0 → fires almost immediately
+            0,    // hold_ttl = 0 → fires almost immediately
             300,
+            3600,
         );
         let broker = SignalingBroker::new();
         let _ = broker.register("client-A".to_string());
