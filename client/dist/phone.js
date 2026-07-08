@@ -432,17 +432,20 @@ function sendPhoneState(statePayload) {
 var _motionIndicatorTimer = null;
 function startMotionIndicator() {
   window.addEventListener('devicemotion', function(e) {
-    // Prefer linear_acceleration (gravity-subtracted); fall back to accelerationIncludingGravity.
-    var a = e.accelerationIncludingGravity;
+    // WR-10: Prefer linearAcceleration (gravity-subtracted) — gives a consistent 0.5 m/s²
+    // threshold regardless of phone orientation. Fall back to accelerationIncludingGravity
+    // only when linearAcceleration is unavailable (older browsers / some Android builds).
+    var a = e.linearAcceleration || e.accelerationIncludingGravity;
     if (!a) { return; }
     var mag = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
     var indicator = document.getElementById('motion-indicator');
     if (!indicator) { return; }
 
-    // Threshold: magnitude > 0.5 m/s² above ~1G (gravity ~9.8) = 10.3; use 10.3 to match spec.
-    // UI-SPEC specifies linear-acceleration > 0.5 m/s²; since we use gravity-inclusive,
-    // 9.8 (rest) + 0.5 = 10.3. Toggle active when phone is in motion above this threshold.
-    if (mag > 10.3) {
+    // Threshold: 0.5 m/s² for gravity-free linear; 10.3 m/s² for gravity-inclusive
+    // (9.8 rest + 0.5 motion margin) — correct only when phone is flat but needed
+    // as a graceful fallback when linearAcceleration is unavailable.
+    var threshold = e.linearAcceleration ? 0.5 : 10.3;
+    if (mag > threshold) {
       indicator.classList.add('motion-active');
       clearTimeout(_motionIndicatorTimer);
       _motionIndicatorTimer = setTimeout(function() {
