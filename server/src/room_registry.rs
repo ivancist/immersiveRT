@@ -938,6 +938,142 @@ mod tests {
         );
     }
 
+    // ── Phase 4 pair-ack tests ────────────────────────────────────────────────
+
+    /// After a desktop joins and a phone pairs, pair-ack["peers"] is non-empty.
+    /// Only Connected desktop slots appear; the phone is never listed (Pitfall 7).
+    #[tokio::test]
+    async fn test_pair_ack_includes_peers() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("client-D".to_string());
+        let _ = broker.register("phone-XYZ".to_string());
+
+        // Desktop joins
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        assert_eq!(join_result["type"], "join-ack");
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+
+        // Phone pairs
+        let pair_payload = serde_json::json!({ "token": token });
+        let pair_result = registry.handle_pair("phone-XYZ", &pair_payload, &broker).await;
+
+        assert_eq!(pair_result["type"], "pair-ack");
+        let peers = pair_result["payload"]["peers"]
+            .as_array()
+            .expect("peers must be a JSON array");
+        assert!(!peers.is_empty(), "peers must be non-empty after a desktop has joined");
+        let peer = &peers[0];
+        assert_eq!(peer["id"].as_str().unwrap(), "client-D", "peer id must match desktop");
+        assert_eq!(peer["slot"].as_u64().unwrap(), 1, "peer slot must be 1");
+        assert!(peer["username"].as_str().is_some(), "peer must have username");
+        // Phone itself must NOT appear in the peers list
+        assert!(
+            !peers.iter().any(|p| p["id"].as_str() == Some("phone-XYZ")),
+            "phone must never appear in peers list (Pitfall 7)"
+        );
+    }
+
+    /// After handle_pair is called with phone_client_id "phone-XYZ", the paired
+    /// SlotInfo.phone_client_id == Some("phone-XYZ").
+    #[tokio::test]
+    async fn test_pair_ack_records_phone_client_id() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("client-D".to_string());
+        let _ = broker.register("phone-XYZ".to_string());
+
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+        let room_code = join_result["payload"]["room_code"].as_str().unwrap().to_string();
+
+        let pair_payload = serde_json::json!({ "token": token });
+        let pair_result = registry.handle_pair("phone-XYZ", &pair_payload, &broker).await;
+        assert_eq!(pair_result["type"], "pair-ack");
+
+        // Verify phone_client_id is recorded in SlotInfo
+        let room = registry.rooms.get(&room_code).unwrap();
+        let slot = room.slots[0].as_ref().unwrap();
+        assert_eq!(
+            slot.phone_client_id.as_deref(),
+            Some("phone-XYZ"),
+            "phone_client_id must be recorded on the paired SlotInfo"
+        );
+    }
+
+    /// pair-ack["ice_servers"] is a non-empty array; the TURN entry has
+    /// "username" and "credential" fields from generate_turn_credentials.
+    #[tokio::test]
+    async fn test_pair_ack_includes_ice_servers() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("client-D".to_string());
+        let _ = broker.register("phone-XYZ".to_string());
+
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+
+        let pair_payload = serde_json::json!({ "token": token });
+        let pair_result = registry.handle_pair("phone-XYZ", &pair_payload, &broker).await;
+        assert_eq!(pair_result["type"], "pair-ack");
+
+        let ice_servers = pair_result["payload"]["ice_servers"]
+            .as_array()
+            .expect("ice_servers must be a JSON array");
+        assert!(!ice_servers.is_empty(), "ice_servers must be non-empty");
+
+        let stun_entry = ice_servers
+            .iter()
+            .find(|s| s["urls"].as_str().map(|u| u.starts_with("stun:")).unwrap_or(false));
+        assert!(stun_entry.is_some(), "must have a STUN entry");
+
+        let turn_entry = ice_servers
+            .iter()
+            .find(|s| s["urls"].as_str().map(|u| u.starts_with("turn:")).unwrap_or(false))
+            .expect("must have a TURN entry");
+        assert!(
+            turn_entry["username"].as_str().is_some(),
+            "TURN entry must have username"
+        );
+        assert!(
+            turn_entry["credential"].as_str().is_some(),
+            "TURN entry must have credential"
+        );
+    }
+
+    /// An unknown/consumed token returns type "pair-error" with reason "invalid_token"
+    /// (existing behavior must be preserved).
+    #[tokio::test]
+    async fn test_pair_ack_invalid_token_still_errors() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("phone-XYZ".to_string());
+
+        let pair_payload = serde_json::json!({ "token": "invalid-token-xyz" });
+        let pair_result = registry.handle_pair("phone-XYZ", &pair_payload, &broker).await;
+
+        assert_eq!(
+            pair_result["type"], "pair-error",
+            "invalid token must return pair-error"
+        );
+        assert_eq!(
+            pair_result["payload"]["reason"], "invalid_token",
+            "reason must be invalid_token"
+        );
+    }
+
     /// Lifecycle broadcast: desktop B disconnects; desktop A receives player-disconnected event.
     #[tokio::test]
     async fn test_lifecycle_broadcast() {
