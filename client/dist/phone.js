@@ -376,9 +376,12 @@ async function requestWakeLock() {
 }
 
 // D-19 Heartbeat: send every 5s so server knows the phone is still alive (PHONE-06).
+// CR-04: guard against null transport (fires before startPhoneClient or after transport closes).
 function startHeartbeat() {
   heartbeatInterval = setInterval(function() {
-    sendWtMessage(transport, { type: 'heartbeat', from: myId, to: '', payload: {} });
+    if (!transport) { return; }
+    sendWtMessage(transport, { type: 'heartbeat', from: myId, to: '', payload: {} })
+      .catch(function(e) { console.debug('[HB] heartbeat send failed:', e); });
   }, 5000);
 }
 
@@ -425,11 +428,15 @@ function closePeer(peerId) {
 // D-16 self-heal + state reporting on visibility change.
 // On foreground: resend heartbeat, re-request Wake Lock, re-open any closed channels.
 // On background: notify server the phone is backgrounded.
+// CR-04: guard against null transport — handler is registered at script-load time
+// but transport is null until startPhoneClient() succeeds.
 document.addEventListener('visibilitychange', function() {
+  if (!transport) { return; }  // not yet connected
   if (document.visibilityState === 'visible') {
     sendPhoneState({ state: 'foreground' });
     // Immediate heartbeat on foreground return resets the 65s server timer (D-19).
-    sendWtMessage(transport, { type: 'heartbeat', from: myId, to: '', payload: {} });
+    sendWtMessage(transport, { type: 'heartbeat', from: myId, to: '', payload: {} })
+      .catch(function(e) { console.debug('[HB] foreground heartbeat failed:', e); });
     // Re-acquire Wake Lock (released automatically when tab goes to background).
     requestWakeLock();
     // Re-open any channels that closed while backgrounded (D-16 self-heal).
