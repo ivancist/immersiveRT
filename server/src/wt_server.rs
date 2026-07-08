@@ -350,9 +350,15 @@ async fn handle_wt_connection(
     if my_alive.load(std::sync::atomic::Ordering::SeqCst) {
         broker.unregister(&my_id);
         tracing::info!(client_id = %my_id, "WT client unregistered");
-        // Lifecycle event: mark slot Disconnected, broadcast player-disconnected,
-        // spawn hold timer (D-16, D-19, SESS-06). Per D-09: called after broker.unregister.
-        room_registry.on_client_disconnect(&my_id, &broker).await;
+        // Phone clients: heartbeat monitor owns slot lifecycle (fires after 65s of silence).
+        // Calling on_client_disconnect here would start a 60s hold timer from the QUIC
+        // drop instant, racing the heartbeat grace window and causing premature slot release
+        // (invalid_token on the next reconnect attempt).
+        if room_registry.is_phone_client(&my_id) {
+            tracing::info!(client_id = %my_id, "WT relay exited for phone — heartbeat monitor will handle cleanup");
+        } else {
+            room_registry.on_client_disconnect(&my_id, &broker).await;
+        }
     } else {
         tracing::info!(client_id = %my_id, "WT relay superseded by newer connection, skipping disconnect");
     }

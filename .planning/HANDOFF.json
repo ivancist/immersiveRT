@@ -1,37 +1,54 @@
 {
   "version": "1.0",
-  "timestamp": "2026-07-08T19:48:22.062Z",
+  "timestamp": "2026-07-08T21:39:34.953Z",
   "phase": "04",
   "phase_name": "phone-bootstrap-and-webrtc-channels",
   "phase_dir": ".planning/phases/04-phone-bootstrap-and-webrtc-channels",
-  "plan": 1,
+  "plan": "UAT",
   "task": 5,
   "total_tasks": 5,
   "status": "paused",
   "completed_tasks": [
-    {"id": 1, "name": "UAT test 1 — QR load", "status": "done"},
-    {"id": 2, "name": "UAT test 2 — iOS permission gate", "status": "done"},
+    {"id": 1, "name": "UAT test 1 — QR load on real devices", "status": "done"},
+    {"id": 2, "name": "UAT test 2 — iOS 13+ permission gate", "status": "done"},
     {"id": 3, "name": "UAT test 3 — Wake Lock", "status": "done"},
-    {"id": 4, "name": "UAT test 4 — WebRTC data channels", "status": "done", "commit": "6ae5c85"}
+    {"id": 4, "name": "UAT test 4 — WebRTC data channels", "status": "done", "commit": "6ae5c85"},
+    {"id": 5, "name": "UAT test 5 — Heartbeat + slot disconnect + reconnect", "status": "in_progress", "progress": "Ghost relay fix implemented, compiles. Not yet re-tested on device."}
   ],
   "remaining_tasks": [
-    {"id": 5, "name": "UAT test 5 — Heartbeat + slot disconnect + reconnect", "status": "in_progress"}
+    {"id": "5b", "name": "Re-run UAT test 5 with ghost relay fix deployed", "status": "not_started"}
   ],
   "blockers": [],
   "async_jobs": [],
   "human_actions_pending": [
     {
-      "action": "Run test 5: pair phone → active view → background phone → watch debug log for reconnect-ok",
-      "context": "Reconnect loop implemented (commit 6ae5c85). Server heartbeat-miss fires ~65s after last heartbeat. Need reconnect-ok in phone log to pass test 5.",
+      "action": "Rebuild + redeploy server (docker compose up --build), re-run UAT test 5: background phone 65+ seconds, verify reconnect-ok across 3+ WT drops including at ~2.5min mark",
+      "context": "Ghost relay fix (is_phone_client guard) implemented and compiles. Previous failure: relay-3 QUIC timeout at 2.5min with alive=true called on_client_disconnect, 60s hold timer fired 9s before phone noticed drop → invalid_token. Fix defers phone slot cleanup to heartbeat monitor (125s total grace).",
       "blocking": true
     }
   ],
   "decisions": [
+    {
+      "decision": "Relay exit skips on_client_disconnect for phone clients (is_phone_client guard in wt_server.rs + ws_server.rs); heartbeat monitor (65s miss + 60s hold = 125s total) owns phone slot cleanup",
+      "rationale": "Ghost relay with alive=true calling on_client_disconnect immediately started a 60s hold timer from QUIC drop instant. Phone noticed drop 2min27sec later, reconnected 9s AFTER hold timer fired → invalid_token. Heartbeat monitor 125s grace > any realistic phone QUIC timeout scenario.",
+      "phase": "04"
+    },
+    {
+      "decision": "heartbeatInterval cleared on both reconnect-fail paths in phone.js",
+      "rationale": "Stale heartbeats after reconnect-fail flooded server logs with WARN phone-not-found (phone-state, heartbeat, rtc-channel-ready messages buffered in WS still firing after slot released)",
+      "phase": "04"
+    },
     {"decision": "for-await-of replaced with .getReader() on incomingBidirectionalStreams", "rationale": "iOS WebKit pre-26.4 crash fix", "phase": "04"},
     {"decision": "WT primary, WS auto-fallback; reconnect tries WT first then WS per iteration", "rationale": "preferred for games; WS reliable fallback", "phase": "04"},
     {"decision": "3s startup delay before first reconnect attempt", "rationale": "iOS network unstable first ~30s after backgrounding", "phase": "04"}
   ],
-  "uncommitted_files": [".planning/STATE.md", "Cargo.lock", "docker/coturn/turnserver.conf", "server/src/room_registry.rs"],
-  "next_action": "Reload phone + desktop. Pair → active view. Background phone. Watch for 'Reconnecting…' dot + 'reconnect-ok' in debug log. If pass: update 04-UAT.md test 5 result=pass, mark phase complete.",
-  "context_notes": "Previous attempts showed 3 fast-fail iterations then success at ~30s. 3s delay + WT-first should improve. listenForServerPushes now starts AFTER reconnect success to avoid noisy logs."
+  "uncommitted_files": [
+    ".planning/STATE.md",
+    "client/dist/phone.js",
+    "server/src/room_registry.rs",
+    "server/src/ws_server.rs",
+    "server/src/wt_server.rs"
+  ],
+  "next_action": "Rebuild server: docker compose up --build. Open phone + desktop. Pair → active view. Background phone 70+ seconds. Watch phone debug log for 'reconnect-ok'. If 3+ reconnects across 5+ minutes all succeed → UAT test 5 pass. Update 04-UAT.md result=pass.",
+  "context_notes": "Root cause of 3rd reconnect failure was relay-3 ghost QUIC timeout (alive=true) firing on_client_disconnect prematurely. WARNs at session end (phone-state not found) were stale heartbeats from open WS after slot released — fixed by clearing heartbeatInterval on reconnect-fail. The broker force-replace + hot reconnect (slot Connected → hot reconnect accepted) fixes from earlier sessions remain in place."
 }

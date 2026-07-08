@@ -775,6 +775,23 @@ impl RoomRegistry {
         })
     }
 
+    /// Returns true if `client_id` is currently the phone owner of any slot.
+    ///
+    /// Used by relay exit to decide whether to call `on_client_disconnect` immediately
+    /// (desktop) or defer to the heartbeat monitor (phone).
+    pub fn is_phone_client(&self, client_id: &str) -> bool {
+        for room_ref in self.rooms.iter() {
+            for slot in room_ref.slots.iter() {
+                if let Some(info) = slot {
+                    if info.phone_client_id.as_deref() == Some(client_id) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Called when a WS/WT connection drops. Marks slot Disconnected, broadcasts
     /// `player-disconnected`, and spawns a hold timer.
     ///

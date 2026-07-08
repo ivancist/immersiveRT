@@ -549,6 +549,7 @@ async function attemptReconnect() {
     phoneLog('reconnect-fail:' + errReason + ' n=' + attempt);
     _reconnecting = false;
     reconnectToken = null;
+    clearInterval(heartbeatInterval); heartbeatInterval = null;
     showView('view-ended');
     return;
   }
@@ -556,6 +557,7 @@ async function attemptReconnect() {
   // Exhausted all attempts.
   _reconnecting = false;
   reconnectToken = null;
+  clearInterval(heartbeatInterval); heartbeatInterval = null;
   showView('view-ended');
 }
 

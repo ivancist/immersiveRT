@@ -358,9 +358,11 @@ where
                 if is_owner {
                     broker.unregister(id);
                     tracing::info!(client_id = %id, "WS client unregistered");
-                    // Lifecycle event: mark slot Disconnected, broadcast player-disconnected,
-                    // spawn hold timer (D-16, D-19, SESS-06). Per D-09: called after broker.unregister.
-                    room_registry.on_client_disconnect(id, &broker).await;
+                    if room_registry.is_phone_client(id) {
+                        tracing::info!(client_id = %id, "WS relay exited for phone — heartbeat monitor will handle cleanup");
+                    } else {
+                        room_registry.on_client_disconnect(id, &broker).await;
+                    }
                 } else {
                     tracing::info!(client_id = %id, "WS relay superseded by newer connection, skipping disconnect");
                 }
