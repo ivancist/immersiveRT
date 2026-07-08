@@ -15,6 +15,9 @@ let wsReady = false;    // true once register ack confirmed (open + registered)
 let pendingMessageQueue = []; // messages queued before WS is ready
 let pendingUsername = null;   // username sent with join-room, used in handleJoinAck
 
+// WebRTC state — desktop side (Phase 4 Plan 02: minimal answerer for PHONE-03)
+var desktopPeers = new Map(); // phoneId → RTCPeerConnection
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
@@ -151,6 +154,15 @@ function sendMessage(type, payload) {
   }
 }
 
+function sendTo(type, to, payload) {
+  var msg = JSON.stringify({ type: type, from: myId, to: to, payload: payload });
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(msg);
+  } else {
+    pendingMessageQueue.push(msg);
+  }
+}
+
 function updateConnectionStatus(text) {
   var el = document.getElementById('connection-status');
   if (el) { el.textContent = text; }
@@ -179,9 +191,67 @@ function onServerMessage(msg) {
     case 'leave-ack':
       // Slot freed on server — no action needed; WS stays open for next join.
       break;
+    case 'offer':
+      handleOffer(msg);
+      break;
+    case 'ice-candidate':
+      handleIceCandidate(msg);
+      break;
+    case 'player-ready':
+      handlePlayerReady(msg);
+      break;
     default:
       console.warn('[WS] Unknown message type:', msg.type);
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// WebRTC answerer — minimal desktop side (PHONE-03 / RESEARCH A4)
+// Full receive pipeline, target-state store, and TURN path are Phase 6 (DESK-02).
+// ──────────────────────────────────────────────────────────────────────────────
+function handleOffer(msg) {
+  var phoneId = msg.from;
+  var pc = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:' + location.hostname + ':3478' }]
+  });
+
+  pc.ondatachannel = function(evt) {
+    var dc = evt.channel;
+    dc.onopen = function() {
+      sendMessage('rtc-channel-ready', { with: phoneId });
+    };
+  };
+
+  pc.onicecandidate = function(evt) {
+    if (!evt.candidate) { return; }
+    sendTo('ice-candidate', phoneId, evt.candidate);
+  };
+
+  desktopPeers.set(phoneId, pc);
+
+  pc.setRemoteDescription(msg.payload)
+    .then(function() { return pc.setLocalDescription(); })
+    .then(function() {
+      sendTo('answer', phoneId, pc.localDescription);
+    })
+    .catch(function(err) {
+      console.warn('[WebRTC] handleOffer failed for phone', phoneId, ':', err);
+      desktopPeers.delete(phoneId);
+    });
+}
+
+function handleIceCandidate(msg) {
+  var pc = desktopPeers.get(msg.from);
+  if (!pc) { return; }
+  pc.addIceCandidate(msg.payload).catch(function(err) {
+    console.warn('[WebRTC] addIceCandidate failed:', err);
+  });
+}
+
+function handlePlayerReady(msg) {
+  var payload = (msg && msg.payload) ? msg.payload : {};
+  console.info('[WebRTC] player-ready received:', payload);
+  appendEventLog('player-ready', payload.slot || 0, payload.username || '');
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -625,6 +695,9 @@ function appendEventLog(event, slot, username) {
       break;
     case 'room-full':
       text = 'Room is full (8/8 players)';
+      break;
+    case 'player-ready':
+      text = (username ? username : 'Player') + ' ready — slot ' + slot;
       break;
     default:
       text = event + ' (slot ' + slot + ')';

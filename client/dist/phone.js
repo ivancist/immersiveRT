@@ -135,6 +135,10 @@ async function startPhoneClient() {
 
   console.log('[Phone] Paired: slot=' + mySlot + ' room=' + roomCode +
               ' peers=' + peers.length + ' iceServers=' + iceServers.length);
+
+  // Fan out one unreliable WebRTC data channel to every desktop in the room (PHONE-03).
+  // openChannelToPeer triggers onnegotiationneeded which auto-creates and sends the offer.
+  peers.forEach(function(p) { openChannelToPeer(p.id); });
 }
 
 // ── WebTransport helpers ──────────────────────────────────────────────────────
@@ -174,6 +178,92 @@ async function sendWtMessage(transport, envelope) {
   }
 }
 
+// ── WebRTC fan-out ───────────────────────────────────────────────────────────
+// Opens one unreliable data channel to a desktop peer (PHONE-03, D-05).
+// channel options { ordered: false, maxRetransmits: 0 } are locked — do not change.
+// The offer is produced by onnegotiationneeded + setLocalDescription (no manual
+// createOffer call — RESEARCH Pattern 3, anti-pattern: do not call createOffer manually).
+function openChannelToPeer(peerId) {
+  var pc = new RTCPeerConnection({ iceServers: iceServers });
+  // D-05 locked: both options must be present and exactly these values.
+  var dc = pc.createDataChannel('sensor', { ordered: false, maxRetransmits: 0 });
+
+  pc.onnegotiationneeded = function() {
+    pc.setLocalDescription()  // no args — auto-creates offer and sets local description
+      .then(function() {
+        return sendWtMessage(transport, {
+          type: 'offer', from: myId, to: peerId, payload: pc.localDescription
+        });
+      })
+      .catch(function(err) {
+        console.warn('[WebRTC] onnegotiationneeded failed for ' + peerId + ':', err);
+      });
+  };
+
+  pc.onicecandidate = function(evt) {
+    if (!evt.candidate) { return; }
+    sendWtMessage(transport, {
+      type: 'ice-candidate', from: myId, to: peerId, payload: evt.candidate
+    }).catch(function(err) {
+      console.warn('[WebRTC] ice-candidate send failed:', err);
+    });
+  };
+
+  dc.onopen = function() {
+    openChannelCount++;
+    updateConnectingUI();
+    // Notify server that this channel is open (D-08 phone half).
+    sendWtMessage(transport, {
+      type: 'rtc-channel-ready', from: myId, to: '', payload: { with: peerId }
+    }).catch(function(err) {
+      console.warn('[WebRTC] rtc-channel-ready send failed:', err);
+    });
+  };
+
+  dc.onclose = function() {
+    // TODO(04-03): closePeer(peerId) — channel reconnect/state notification
+  };
+
+  peerConnections.set(peerId, { pc: pc, dc: dc });
+}
+
+// Updates the X/Y channel counter in the connecting view (D-10).
+function updateConnectingUI() {
+  var chanOpenEl = document.getElementById('chan-open');
+  if (chanOpenEl) { chanOpenEl.textContent = String(openChannelCount); }
+  // chan-total is pre-populated in startPhoneClient; no update needed here.
+}
+
+// Called when server fires player-ready: transition to active view (D-11).
+// Sets active-status-dot to connected and populates username/room/channel count.
+// Wake Lock, heartbeat, and motion indicator are Plan 03 (stubs below).
+function onPlayerReady(msg) {
+  // Capture username from player-ready payload (desktop player's name for this slot).
+  var payload = (msg && msg.payload) ? msg.payload : {};
+  if (payload.username) { myUsername = payload.username; }
+
+  showView('view-active');
+
+  var usernameEl  = document.getElementById('active-username');
+  var roomEl      = document.getElementById('active-room');
+  var channelsEl  = document.getElementById('active-channels');
+  var dotEl       = document.getElementById('active-status-dot');
+
+  if (usernameEl) { usernameEl.textContent = myUsername; }
+  if (roomEl)     { roomEl.textContent = roomCode; }
+  if (channelsEl) {
+    channelsEl.textContent = openChannelCount + '/' + peers.length + ' connected';
+  }
+  if (dotEl) {
+    dotEl.classList.remove('dot--hold', 'dot--empty');
+    dotEl.classList.add('dot--connected');
+  }
+
+  // TODO(04-03): requestWakeLock()
+  // TODO(04-03): startHeartbeat()
+  // TODO(04-03): startMotionIndicator()
+}
+
 // ── Server push listener ──────────────────────────────────────────────────────
 // Called WITHOUT await at the top level — runs as a concurrent background task.
 // Must loop over incomingBidirectionalStreams to avoid back-pressure stall
@@ -194,7 +284,9 @@ async function listenForServerPushes(transport) {
           buf = merged;
         }
         var msg = JSON.parse(new TextDecoder().decode(buf));
-        handleServerPush(msg);
+        handleServerPush(msg).catch(function(err) {
+          console.warn('[WebRTC] handleServerPush error:', err);
+        });
       } catch (err) {
         console.warn('[WT] Malformed server push or stream error:', err);
       }
@@ -205,31 +297,39 @@ async function listenForServerPushes(transport) {
   }
 }
 
-function handleServerPush(msg) {
+async function handleServerPush(msg) {
+  var entry;
   switch (msg.type) {
     case 'pair-error':
       // Server rejected a re-pair attempt after initial connection.
       showView('view-error-pair');
       break;
 
-    // ── Plan 02 stubs — filled in when WebRTC channels are implemented ──
+    case 'player-ready':
+      onPlayerReady(msg);
+      break;
+
+    case 'answer':
+      entry = peerConnections.get(msg.from);
+      if (!entry) {
+        console.warn('[WebRTC] answer from unknown peer:', msg.from);
+        break;
+      }
+      await entry.pc.setRemoteDescription(msg.payload);
+      break;
+
+    case 'ice-candidate':
+      entry = peerConnections.get(msg.from);
+      if (!entry) { break; }
+      await entry.pc.addIceCandidate(msg.payload);
+      break;
+
+    // ── Plan 03 stubs ──
     case 'peer-joined':
-      // TODO(04-02): openChannelToPeer(msg.peer.id)
+      // TODO(04-03): openChannelToPeer(msg.payload.peer.id)
       break;
     case 'peer-left':
-      // TODO(04-02): closePeer(msg.peer_id)
-      break;
-    case 'player-ready':
-      // TODO(04-02): onPlayerReady(msg)
-      break;
-    case 'offer':
-      // TODO(04-02): setRemoteDescription on the matching RTCPeerConnection
-      break;
-    case 'answer':
-      // TODO(04-02): setRemoteDescription on the matching RTCPeerConnection
-      break;
-    case 'ice-candidate':
-      // TODO(04-02): addIceCandidate on the matching RTCPeerConnection
+      // TODO(04-03): closePeer(msg.payload.peer_id)
       break;
 
     default:
