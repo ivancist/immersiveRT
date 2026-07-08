@@ -61,7 +61,9 @@ async fn turn_creds_handler(
                 "Missing Authorization header".into(),
             )
         })?;
-    if token != format!("Bearer {}", state.api_token) {
+    use subtle::ConstantTimeEq;
+    let expected = format!("Bearer {}", state.api_token);
+    if expected.as_bytes().ct_eq(token.as_bytes()).unwrap_u8() == 0 {
         return Err((
             axum::http::StatusCode::UNAUTHORIZED,
             "Invalid token".into(),
