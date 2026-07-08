@@ -446,7 +446,18 @@ impl RoomRegistry {
                 }
             };
             let idx = (slot_id - 1) as usize;
+            // WR-07: Assert the slot is Disconnected before accepting the reconnect.
+            // If the hold timer fired between the reconnect_tokens lookup above and
+            // this get_mut (race: release_slot_if_disconnected set slot to None),
+            // the slot is gone and we must reject — otherwise we'd silently corrupt
+            // a stale reconnect_tokens entry that future pair attempts would hit.
             if let Some(Some(info)) = room_ref.slots.get_mut(idx) {
+                if info.status != SlotStatus::Disconnected {
+                    return serde_json::json!({
+                        "type": "join-error",
+                        "payload": {"reason": "slot_not_held"}
+                    });
+                }
                 info.client_id = client_id.to_string();
                 info.status = SlotStatus::Connected;
             }
