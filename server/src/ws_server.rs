@@ -279,6 +279,11 @@ where
                                         .await;
                                     // Fire-and-forget: no response to the desktop.
                                 }
+                                "heartbeat" => {
+                                    // Update last_heartbeat for this phone (D-19, PHONE-06).
+                                    room_registry.handle_heartbeat(&envelope.from);
+                                    // No ack body for heartbeat.
+                                }
                                 _ => {
                                     // Existing broker routing (offer, answer, ice-candidate, etc.)
                                     // Route to the target client; caller logs the warning per D-05.

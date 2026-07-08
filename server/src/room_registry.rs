@@ -999,6 +999,157 @@ impl RoomRegistry {
         self.route_to_phone(&room_code, player_ready_bytes, broker);
     }
 
+    /// Update the heartbeat timestamp for the slot whose `phone_client_id` matches.
+    ///
+    /// Synchronous O(1)-per-slot update — holds no ref across an await (Pitfall 3).
+    /// Logs a warning if the phone is not found in any slot (T-04-09 mitigation).
+    pub fn handle_heartbeat(&self, phone_client_id: &str) {
+        for mut room_ref in self.rooms.iter_mut() {
+            for slot in room_ref.slots.iter_mut().flatten() {
+                if slot.phone_client_id.as_deref() == Some(phone_client_id) {
+                    slot.last_heartbeat = Some(std::time::Instant::now());
+                    return;
+                }
+            }
+        }
+        tracing::warn!(
+            phone_client_id = %phone_client_id,
+            "heartbeat: phone not found in any slot"
+        );
+    }
+
+    /// Return all Connected slots that have a phone_client_id AND a last_heartbeat
+    /// older than `timeout`. Slots that never heartbeated (None) are excluded —
+    /// miss detection only starts after the first heartbeat post-player-ready.
+    ///
+    /// Collects into an owned Vec while iterating DashMap, drops all Refs before
+    /// returning (Pitfall 3 — no Ref across async boundary).
+    pub fn phones_missing_heartbeat(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Vec<(RoomCode, SlotId, String, String)> {
+        let now = std::time::Instant::now();
+        let mut missing = Vec::new();
+        for room_ref in self.rooms.iter() {
+            let room = room_ref.value();
+            for (idx, slot_opt) in room.slots.iter().enumerate() {
+                if let Some(slot) = slot_opt {
+                    if slot.status == SlotStatus::Connected {
+                        if let (Some(phone_id), Some(hb)) =
+                            (&slot.phone_client_id, &slot.last_heartbeat)
+                        {
+                            if now.duration_since(*hb) > timeout {
+                                missing.push((
+                                    room.code.clone(),
+                                    (idx + 1) as u8,
+                                    slot.username.clone(),
+                                    phone_id.clone(),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        missing
+    }
+
+    /// Mark a phone slot Disconnected after a heartbeat miss (D-19).
+    ///
+    /// - Sets the slot status to Disconnected.
+    /// - Broadcasts a `phone-state` envelope with `state: "heartbeat-miss"` to all
+    ///   room desktops (never echoed to the phone — it is already silent).
+    /// - Spawns the same hold timer used by `on_client_disconnect` (hold_ttl_secs),
+    ///   so the slot is available for reconnect during the hold window.
+    pub async fn handle_heartbeat_miss(
+        &self,
+        room_code: &str,
+        slot_id: SlotId,
+        broker: &SignalingBroker,
+    ) {
+        // Step 1: Verify the slot is still Connected and collect username.
+        // Drop DashMap Ref before any broker or async call (Pitfall 3).
+        let username: Option<String> = {
+            if let Some(room_ref) = self.rooms.get(room_code) {
+                let idx = (slot_id - 1) as usize;
+                room_ref.slots.get(idx).and_then(|s| s.as_ref()).and_then(|slot| {
+                    if slot.status == SlotStatus::Connected {
+                        Some(slot.username.clone())
+                    } else {
+                        None // already Disconnected — avoid double-miss
+                    }
+                })
+            } else {
+                None
+            }
+        };
+        // DashMap Ref dropped here.
+
+        let username = match username {
+            Some(u) => u,
+            None => return, // slot not found or already Disconnected
+        };
+
+        tracing::warn!(
+            room_code = %room_code, slot_id = %slot_id,
+            "heartbeat miss — broadcasting to desktops, then marking slot Disconnected"
+        );
+
+        // Step 2: Broadcast phone-state heartbeat-miss to all Connected desktops BEFORE
+        // marking the slot Disconnected (so broadcast_to_room's Connected filter still works).
+        let event_bytes = serde_json::to_vec(&serde_json::json!({
+            "type": "phone-state",
+            "payload": { "state": "heartbeat-miss", "slot": slot_id }
+        }))
+        .unwrap_or_default();
+        self.broadcast_to_room(room_code, "", event_bytes, broker);
+
+        // Step 3: Now mark the slot Disconnected.
+        {
+            if let Some(mut room_ref) = self.rooms.get_mut(room_code) {
+                let idx = (slot_id - 1) as usize;
+                if let Some(Some(slot)) = room_ref.slots.get_mut(idx) {
+                    slot.status = SlotStatus::Disconnected;
+                }
+            }
+        }
+        // DashMap RefMut dropped here.
+
+        // Spawn hold timer — reuses same pattern as on_client_disconnect (D-19).
+        let registry = self.clone();
+        let broker_clone = broker.clone();
+        let code_clone = room_code.to_string();
+        let username_clone = username.clone();
+        let hold_secs = self.hold_ttl_secs;
+
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(hold_secs)).await;
+            if let Some(evicted_username) =
+                registry.release_slot_if_disconnected(&code_clone, slot_id)
+            {
+                registry
+                    .reconnect_tokens
+                    .retain(|_, v| v != &(code_clone.clone(), slot_id));
+                let left_event = serde_json::to_vec(&serde_json::json!({
+                    "type": "room-event",
+                    "payload": {
+                        "event": "player-left",
+                        "slot": slot_id,
+                        "username": evicted_username
+                    }
+                }))
+                .unwrap_or_default();
+                registry.broadcast_to_room(&code_clone, "", left_event, &broker_clone);
+                tracing::info!(
+                    room_code = %code_clone, slot_id = %slot_id,
+                    username = %username_clone,
+                    "heartbeat-miss hold timer expired — slot released"
+                );
+            }
+        });
+        self.hold_timers.insert((room_code.to_string(), slot_id), handle);
+    }
+
     /// Generate a 6-character uppercase room code from the unambiguous charset
     /// `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (D-05, Claude's discretion).
     ///

@@ -250,6 +250,12 @@ async fn handle_wt_connection(
                                     .await;
                                 let _ = send.finish().await;
                             }
+                            "heartbeat" => {
+                                // Update last_heartbeat for this phone (D-19, PHONE-06).
+                                // Synchronous O(1) update — no async boundary needed.
+                                room_registry.handle_heartbeat(&envelope.from);
+                                let _ = send.finish().await;
+                            }
                             _ => {
                                 // Re-serialize the envelope to forward its bytes via the broker.
                                 let payload = match serde_json::to_vec(&envelope) {
