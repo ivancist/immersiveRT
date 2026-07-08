@@ -130,13 +130,13 @@ Plans:
   4. A phone connected to a 3-desktop room opens three independent unreliable WebRTC data channels (`ordered: false, maxRetransmits: 0`), one per desktop — verified by `RTCPeerConnection.connectionState === 'connected'` for each
   5. After 5 seconds of silence, the server receives a heartbeat; if the phone tab is backgrounded and the heartbeat stops, the server marks the slot as disconnected (not permanently evicted) within 65 seconds
 
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 **UI hint**: yes
 
 Plans:
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — Phone bootstrap slice: phone.html six-view shell + nginx /phone serving, iOS permission gate + WebTransport pair, enhanced pair-ack (peers[] + ice_servers) and SlotInfo.phone_client_id (PHONE-01, PHONE-02)
+- [x] 04-01-PLAN.md — Phone bootstrap slice: phone.html six-view shell + nginx /phone serving, iOS permission gate + WebTransport pair, enhanced pair-ack (peers[] + ice_servers) and SlotInfo.phone_client_id (PHONE-01, PHONE-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -222,7 +222,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 1. Server and Transport Foundation | 3/3 | Complete    | 2026-07-06 |
 | 2. Signaling, TURN, and Deployment | 4/5 | In Progress|  |
 | 3. Session and Pairing | 4/4 | Complete    | 2026-07-07 |
-| 4. Phone Bootstrap and WebRTC Channels | 0/3 | Planned | - |
+| 4. Phone Bootstrap and WebRTC Channels | 1/3 | In Progress|  |
 | 5. Sensor Fusion and Packet Encoding | 0/TBD | Not started | - |
 | 6. Desktop Receive, Decode, and Rendering | 0/TBD | Not started | - |
 | 7. SDK Public API | 0/TBD | Not started | - |

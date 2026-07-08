@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 4
-current_phase_name: Phone Bootstrap and WebRTC Channels
-status: completed
+current_phase: 04
+current_phase_name: phone-bootstrap-and-webrtc-channels
+status: executing
 stopped_at: Phase 4 UI-SPEC approved
-last_updated: "2026-07-07T23:47:22.344Z"
-last_activity: 2026-07-07
-last_activity_desc: Phase 04 planning complete
+last_updated: "2026-07-08T00:16:04.027Z"
+last_activity: 2026-07-08
+last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 8
   completed_phases: 3
-  total_plans: 12
-  completed_plans: 12
+  total_plans: 15
+  completed_plans: 13
   percent: 38
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** Phone motion feels physically immediate on screen — sub-20ms sensor delivery from phone to desktop, lowest possible latency.
-**Current focus:** Phase 4 — Phone Bootstrap and WebRTC Channels
+**Current focus:** Phase 04 — phone-bootstrap-and-webrtc-channels
 
 ## Current Position
 
-Phase: 4 — Phone Bootstrap and WebRTC Channels
-Plan: Not started
-Status: Phase 03 shipped — release phase-03-complete
-Last activity: 2026-07-07 — Phase 04 planning complete
+Phase: 04 (phone-bootstrap-and-webrtc-channels) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-07-08 — Phase 04 execution started
 
 Progress: [███████░░░] 67%
 
@@ -69,6 +69,7 @@ Progress: [███████░░░] 67%
 | Phase 03 P01 | 16 | 3 tasks | 4 files |
 | Phase 03 P03 | 2 min | 2 tasks | 2 files |
 | Phase 03 P02 | 18 min | 3 tasks | 4 files |
+| Phase 04 P01 | 12 | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,9 @@ Recent decisions affecting current work:
 - [Phase ?]: userid=anonymous placeholder for Phase 2; Phase 4 supplies real client session ID
 - [Phase ?]: Arc<RoomRegistry> only threaded through relay functions — base_url and pairing_secret stored inside registry from Plan 03-01 constructor
 - [Phase ?]: Startup log includes base_url but not pairing_token_secret value — T-03-07 mitigation enforced at main.rs level
+- [Phase ?]: Phase 4 Plan 01: RoomRegistry.turn_shared_secret added — threaded from main.rs so handle_pair can generate TURN credentials at pair time
+- [Phase ?]: Phase 4 Plan 01: nginx try_files $uri $uri.html added — /phone resolves to phone.html without serving index.html (RESEARCH Pitfall 6)
+- [Phase ?]: Phase 4 Plan 01: listenForServerPushes started before register/pair — incomingBidirectionalStreams must be consumed immediately after transport.ready (RESEARCH Pitfall 2)
 
 ### Pending Todos
 
@@ -126,6 +130,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-07T22:43:31.911Z
+Last session: 2026-07-08T00:15:51.585Z
 Stopped at: Phase 4 UI-SPEC approved
 Resume file: .planning/phases/04-phone-bootstrap-and-webrtc-channels/04-UI-SPEC.md
