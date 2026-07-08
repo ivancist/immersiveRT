@@ -327,10 +327,21 @@ where
                     } => {
                         match maybe_payload {
                             Some(payload) => {
-                                let text = String::from_utf8_lossy(&payload).into_owned();
-                                if write.send(Message::Text(text.into())).await.is_err() {
-                                    tracing::warn!("WS send failed to {addr}, closing connection");
-                                    break;
+                                // WR-08: use from_utf8 instead of from_utf8_lossy to detect
+                                // non-UTF-8 broker payloads explicitly. Current payloads are
+                                // always serde_json output (valid UTF-8), but future code paths
+                                // pushing binary data would be silently corrupted by lossy.
+                                match String::from_utf8(payload) {
+                                    Ok(text) => {
+                                        if write.send(Message::Text(text.into())).await.is_err() {
+                                            tracing::warn!("WS send failed to {addr}, closing connection");
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("WS broker payload is not valid UTF-8, dropping: {e}");
+                                        continue;
+                                    }
                                 }
                             }
                             None => {
