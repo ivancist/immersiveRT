@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-07-08T15:51:39.947Z",
+  "phase": "04",
+  "phase_name": "phone-bootstrap-and-webrtc-channels",
+  "phase_dir": ".planning/phases/04-phone-bootstrap-and-webrtc-channels",
+  "plan": null,
+  "task": null,
+  "total_tasks": null,
+  "status": "paused",
+  "activity": "UAT in progress",
+  "completed_tasks": [
+    {"id": 1, "name": "QR load on real devices", "status": "pass"},
+    {"id": 2, "name": "iOS 13+ permission gate", "status": "pass"},
+    {"id": 3, "name": "Wake Lock — screen stays on", "status": "pass"}
+  ],
+  "remaining_tasks": [
+    {"id": 4, "name": "WebRTC data channels — 3-desktop room", "status": "pending"},
+    {"id": 5, "name": "Heartbeat + slot disconnect — background phone 65s", "status": "pending"}
+  ],
+  "blockers": [],
+  "async_jobs": [],
+  "human_actions_pending": [
+    {"action": "Need desktop room with 3 peers to test test 4 (WebRTC data channels)", "context": "Test 4 requires phone connected to 3 desktops simultaneously", "blocking": false}
+  ],
+  "decisions": [
+    {"decision": "requestWakeLock() moved to DeviceMotionEvent gesture callback", "rationale": "iOS silently rejects wake lock requests outside user gesture context"},
+    {"decision": "Added registered flag to sendPhoneState", "rationale": "Prevents phone-state stream racing register stream as first WT message — server rejects non-register first message"},
+    {"decision": "Added RUST_LOG=info to docker-compose.yml", "rationale": "Default tracing_subscriber shows ERROR only; INFO needed to diagnose WT connection issues"},
+    {"decision": "Updated Makefile dev-certs to auto-detect LAN IP", "rationale": "mkcert cert must cover LAN IP for WebTransport TLS to work on real phone devices"}
+  ],
+  "uncommitted_files": [
+    "Makefile",
+    "client/dist/phone.js",
+    "docker-compose.yml",
+    ".planning/phases/04-phone-bootstrap-and-webrtc-channels/04-UAT.md",
+    ".planning/STATE.md"
+  ],
+  "next_action": "Continue UAT from test 4: WebRTC data channels (3-desktop room). Then test 5: heartbeat/disconnect. Then commit all fixes and complete UAT.",
+  "context_notes": "Several bugs found and fixed during UAT. All fixes are in phone.js and Makefile/docker-compose. No server code changed. Phone must hard-refresh Safari to load latest phone.js (304 cache issue — user may need to clear site data)."
+}

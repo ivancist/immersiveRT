@@ -17,6 +17,7 @@ var peerConnections = new Map(); // peerId → { pc, dc }
 var openChannelCount = 0;
 var wakeLockSentinel = null;
 var heartbeatInterval = null;
+var registered = false;         // true only after server acks register; guards sendPhoneState
 
 // ── View helper ──────────────────────────────────────────────────────────────
 function showView(id) {
@@ -44,6 +45,10 @@ function attachGrantButton() {
       DeviceMotionEvent.requestPermission()
         .then(function(result) {
           if (result === 'granted') {
+            // Request Wake Lock here, while still in the user-gesture context.
+            // iOS rejects navigator.wakeLock.request() if called outside a gesture
+            // (e.g. after async WebRTC negotiation completes).
+            requestWakeLock();
             showView('view-connecting');
             startPhoneClient();
           } else {
@@ -83,6 +88,10 @@ async function startPhoneClient() {
     await transport.ready;
   } catch (err) {
     console.error('[WT] Connection failed:', err);
+    document.getElementById('pair-error-body').textContent =
+      'Cannot reach the server at ' + wtUrl + '. ' +
+      'Make sure the server is running and this device trusts its TLS certificate ' +
+      '(install the mkcert root CA on this device, then regenerate certs with your LAN IP).';
     showView('view-error-pair');
     return;
   }
@@ -95,8 +104,11 @@ async function startPhoneClient() {
   // Register with the server so it can route messages to us by myId.
   try {
     await sendWtMessage(transport, { type: 'register', from: myId, to: '', payload: {} });
+    registered = true;
   } catch (err) {
     console.error('[WT] Register failed:', err);
+    document.getElementById('pair-error-body').textContent =
+      'Connected to server but registration failed. Check server logs.';
     showView('view-error-pair');
     return;
   }
@@ -109,6 +121,8 @@ async function startPhoneClient() {
     });
   } catch (err) {
     console.error('[WT] Pair request failed:', err);
+    document.getElementById('pair-error-body').textContent =
+      'Server connection dropped during pairing. Try scanning the QR code again.';
     showView('view-error-pair');
     return;
   }
@@ -142,10 +156,12 @@ async function startPhoneClient() {
   transport.closed.then(function() {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
+    registered = false;
     showView('view-ended');
   }).catch(function() {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
+    registered = false;
     showView('view-ended');
   });
 
@@ -428,7 +444,10 @@ function startHeartbeat() {
 }
 
 // D-17 Phone state: relay a state transition to the server (server relays to desktops).
+// CR-04: guard against null transport (fires before startPhoneClient or after transport closes).
+// registered guard: prevents phone-state from racing register as first WT stream (WR-12).
 function sendPhoneState(statePayload) {
+  if (!transport || !registered) { return; }
   sendWtMessage(transport, { type: 'phone-state', from: myId, to: '', payload: statePayload });
 }
 

@@ -42,6 +42,7 @@ services:
       # Set BASE_URL=https://<your-LAN-IP>:8443 for phone testing (RESEARCH.md Pitfall 3).
       # Never use http:// — iOS/Android camera apps will NOT auto-open HTTP links.
       - BASE_URL=${BASE_URL}
+      - RUST_LOG=info
     volumes:
       - ./certs:/certs:ro
     depends_on:
