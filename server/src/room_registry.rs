@@ -208,10 +208,23 @@ impl RoomRegistry {
 
         // Resolve or create room.
         let room_code: RoomCode = if room_code_input.is_empty() {
-            // Create new room with a generated code.
-            let code = self.generate_room_code();
-            self.rooms.insert(code.clone(), Room::new(code.clone(), game_type));
-            code
+            // WR-04: Create new room atomically via Entry API to prevent two concurrent
+            // tasks from generating the same code, both seeing contains_key==false, and
+            // overwriting each other's room (silent data loss).
+            use dashmap::mapref::entry::Entry;
+            use rand::RngExt;
+            const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+            loop {
+                let code: String = {
+                    let mut rng = rand::rng();
+                    (0..6).map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char).collect()
+                };
+                if let Entry::Vacant(e) = self.rooms.entry(code.clone()) {
+                    e.insert(Room::new(code.clone(), game_type));
+                    break code;
+                }
+                // collision — regenerate
+            }
         } else {
             // Validate the existing room exists.
             if !self.rooms.contains_key(&room_code_input) {
