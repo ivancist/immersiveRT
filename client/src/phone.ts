@@ -1,7 +1,9 @@
 /* phone.ts — ImmersiveRT phone client: permission gate, signaling,
  * WebRTC data channels, Wake Lock, heartbeat.
  * Strict-TypeScript ES module (migrated from client/public/phone.js, Plan 05-02).
- * All browser built-in APIs only — no npm imports in this migration pass.
+ *
+ * Plan 06 additions: hold-still calibration scene (D-08), OS-orientation thin
+ * sensor pipeline (PHONE-04, PHONE-05) — broadcastPacket + startSensorPipeline.
  *
  * Signaling transport priority:
  *   1. WebTransport (QUIC/HTTP3, port 4433) — preferred; uses .getReader() on
@@ -10,6 +12,11 @@
  *   2. WebSocket (WSS, port 9090) — automatic fallback if WT is unsupported,
  *      unavailable, or fails to connect.
  */
+
+// ── Sensor pipeline imports (Plan 06) ────────────────────────────────────────
+import { encodePacket, _packetBuf, runCalibration, safeFloat } from './sensor/encode';
+import { eulerToQuat } from './sensor/orientation';
+import type { SensorPacket, Quaternion } from './types';
 
 // Marks this file as an ES module (prevents global-scope collision with room.ts).
 export {};
@@ -32,6 +39,14 @@ let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let registered = false;       // true once register ack confirmed; guards sendPhoneState
 let reconnectToken: string | null = null;  // from pair-ack / join-ack; used for WT-drop WS reconnect
 let _reconnecting = false;    // true during attemptReconnect loop; suppresses ws.onclose → view-ended
+
+// ── Sensor pipeline state (Plan 06) ─────────────────────────────────────────
+let sessionStart = 0;                              // ms epoch at pipeline start
+let seq = 0;                                       // monotonic packet counter
+let primaryQuat: Quaternion = { w: 1, x: 0, y: 0, z: 0 }; // OS-fused orientation
+// Calibration params stored for Plan 07 (ZUPT + Kalman initialisation).
+let _calThreshold = 0;
+let _calKalmanQ   = 0;
 
 // Promise resolvers for WS pair / reconnect request/response.
 let _pairResolve: ((msg: SignalingMessage) => void) | null = null;
@@ -667,12 +682,123 @@ function updateConnectingUI(): void {
   if (chanOpenEl) { chanOpenEl.textContent = String(openChannelCount); }
 }
 
+// ── Sensor broadcast (Plan 06 / PHONE-04) ────────────────────────────────────
+/**
+ * Fan the given Uint8Array out to every peer data channel that is open.
+ * Checks both `entry.channelOpen` and `dc.readyState` before each send;
+ * wraps each send in try/catch so one closing channel cannot abort the loop
+ * (T-05-14 mitigation).
+ */
+// RTCDataChannel.send() expects ArrayBufferView<ArrayBuffer> (not SharedArrayBuffer).
+// _packetBuf is a plain ArrayBuffer so the cast is always correct at runtime.
+function broadcastPacket(uint8: Uint8Array<ArrayBuffer>): void {
+  peerConnections.forEach(function(entry) {
+    if (entry.channelOpen && entry.dc.readyState === 'open') {
+      try {
+        entry.dc.send(uint8);
+      } catch (_e) {
+        // Channel closing between readyState check and send — ignored (T-05-14).
+      }
+    }
+  });
+}
+
+// ── Thin sensor pipeline (Plan 06 / PHONE-04, PHONE-05) ──────────────────────
+/**
+ * Start the OS-orientation → encode → broadcast pipeline.
+ *
+ * THIN SLICE: orientation is real (OS-fused via eulerToQuat); position
+ * (px/py/pz), gesture displacement (dx/dy/dz), driftConfidence, and touch
+ * are zero/inactive placeholders.  Plan 07 replaces those with real
+ * ZUPT-gated dead-reckoning and touch state (deepened, not reduced).
+ *
+ * @param zuptThreshold  Variance threshold from calibration (stored for Plan 07).
+ * @param kalmanQ        Kalman process-noise Q from calibration (stored for Plan 07).
+ */
+function startSensorPipeline(zuptThreshold: number, kalmanQ: number): void {
+  // Store calibration params — Plan 07 consumes these for ZUPT/Kalman init.
+  _calThreshold = zuptThreshold;
+  _calKalmanQ   = kalmanQ;
+
+  sessionStart = Date.now();
+
+  // Dev Hz/byte log state.
+  let _pktCount  = 0;
+  let _lastLogMs = sessionStart;
+
+  // PRIMARY orientation: OS-fused DeviceOrientationEvent → quaternion (D-03).
+  // Do NOT run a second Madgwick pass on this — the OS already fuses gyro + mag.
+  window.addEventListener('deviceorientation', function(e: DeviceOrientationEvent) {
+    primaryQuat = eulerToQuat(
+      safeFloat(e.alpha),
+      safeFloat(e.beta),
+      safeFloat(e.gamma),
+    );
+  });
+
+  // Sensor tick: build SensorPacket → encode 36 bytes into reused buffer → broadcast.
+  window.addEventListener('devicemotion', function(e: DeviceMotionEvent) {
+    // Build packet — thin slice: OS quaternion only.
+    // Plan 07: replace dx/dy/dz, px/py/pz, driftConfidence, and touch with
+    // ZUPT-gated dead-reckoning from Kalman1D + getGestureDisplacement + currentTouch.
+    const pkt: SensorPacket = {
+      seq: seq++,
+      timestamp: Date.now() - sessionStart,
+      qw: primaryQuat.w,
+      qx: primaryQuat.x,
+      qy: primaryQuat.y,
+      qz: primaryQuat.z,
+      // Plan 07: replace with ZUPT/Kalman dead-reckoning position.
+      dx: 0, dy: 0, dz: 0,
+      px: 0, py: 0, pz: 0,
+      driftConfidence: 0,
+      // Plan 07: replace with real touch state (currentTouch).
+      touchActive: false,
+      touchX: 0,
+      touchY: 0,
+    };
+
+    // Encode into module-scope reused buffer — no new ArrayBuffer per tick (Pitfall 5).
+    // Cast is correct: _packetBuf is ArrayBuffer (not SharedArrayBuffer) so the
+    // Uint8Array returned by encodePacket is always Uint8Array<ArrayBuffer> at runtime.
+    const uint8 = encodePacket(pkt, _packetBuf) as Uint8Array<ArrayBuffer>;
+    broadcastPacket(uint8);
+
+    // Motion indicator visual feedback.
+    const a = e.acceleration || e.accelerationIncludingGravity;
+    if (a) {
+      const mag = Math.sqrt((a.x ?? 0) * (a.x ?? 0) + (a.y ?? 0) * (a.y ?? 0) + (a.z ?? 0) * (a.z ?? 0));
+      const indicator = document.getElementById('motion-indicator');
+      if (indicator) {
+        const threshold = e.acceleration ? 0.5 : 10.3;
+        if (mag > threshold) {
+          indicator.classList.add('motion-active');
+          if (_motionIndicatorTimer !== null) { clearTimeout(_motionIndicatorTimer); }
+          _motionIndicatorTimer = setTimeout(function() {
+            indicator.classList.remove('motion-active');
+          }, 300);
+        }
+      }
+    }
+
+    // Dev byte/Hz log — at most once per second.
+    _pktCount++;
+    const now = Date.now();
+    const elapsed = now - _lastLogMs;
+    if (elapsed >= 1000) {
+      const hz = (_pktCount / elapsed) * 1000;
+      phoneLog('pkt ' + uint8.byteLength + 'B @' + hz.toFixed(0) + 'Hz');
+      _pktCount  = 0;
+      _lastLogMs = now;
+    }
+  });
+}
+
 function onPlayerReady(msg: SignalingMessage): void {
   const payload = (msg && msg.payload) ? msg.payload : {};
   if (typeof payload['username'] === 'string') { myUsername = payload['username']; }
 
-  showView('view-active');
-
+  // Pre-populate the active view's UI elements (visible after calibration completes).
   const usernameEl = document.getElementById('active-username');
   const roomEl     = document.getElementById('active-room');
   const channelsEl = document.getElementById('active-channels');
@@ -686,11 +812,27 @@ function onPlayerReady(msg: SignalingMessage): void {
     dotEl.classList.add('dot--connected');
   }
 
-  requestWakeLock();
-  startHeartbeat();
-  startMotionIndicator();
+  // Phase 5 D-08: show hold-still calibration scene, then auto-advance to active view.
+  showView('view-calibrating');
 
-  // Phase 5: sensor pipeline hooks added in Plan 06 (calibration + startSensorPipeline)
+  // Trigger the 3-second countdown bar CSS transition.
+  // Double-rAF ensures the hidden → visible repaint resolves before width transition fires.
+  const fillEl = document.getElementById('calibration-fill');
+  if (fillEl) {
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() {
+        (fillEl as HTMLElement).style.width = '100%';
+      });
+    });
+  }
+
+  // runCalibration collects 3 s of devicemotion accel-magnitude samples, then calls back.
+  runCalibration(function(threshold, kalmanQ) {
+    showView('view-active');
+    requestWakeLock();
+    startHeartbeat();
+    startSensorPipeline(threshold, kalmanQ);
+  });
 }
 
 // ── Server message handler ────────────────────────────────────────────────────
