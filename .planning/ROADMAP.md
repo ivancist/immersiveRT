@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Signaling, TURN, and Deployment** - WebRTC ICE signaling broker, coturn with host networking, ephemeral TURN credentials, full Docker Compose stack (completed 2026-07-07)
 - [x] **Phase 3: Session and Pairing** - Room join, QR code + short code pairing, slot assignment, reconnect hold, 2-8 player support, room lifecycle events (completed 2026-07-07)
 - [ ] **Phase 4: Phone Bootstrap and WebRTC Channels** - Phone web app delivery, iOS DeviceMotion permission gate, Wake Lock, heartbeat, unreliable data channels to all desktops
-- [ ] **Phase 5: Sensor Fusion and Packet Encoding** - On-device Madgwick, adaptive ZUPT, Kalman dead-reckoning, gesture displacement, touch capture, 36-byte binary DataView packet at 60Hz
+- [x] **Phase 5: Sensor Fusion and Packet Encoding** - On-device Madgwick, adaptive ZUPT, Kalman dead-reckoning, gesture displacement, touch capture, 36-byte binary DataView packet at 60Hz (completed 2026-07-09)
 - [ ] **Phase 6: Desktop Receive, Decode, and Rendering** - WebTransport desktop connection, WebRTC peer accept from all phones, binary decode, sequence-drop, target-state store, Three.js slerp loop
 - [ ] **Phase 7: SDK Public API** - npm package `immersive-rt`, imperative + event APIs, TypeScript types, latency overlay, drift-honest naming, raw orientation opt-in
 - [ ] **Phase 8: Demo Game** - Multi-player Three.js scene, orientation-driven objects, gesture-launched flick action, latency overlay always visible
@@ -160,7 +160,7 @@ Plans:
   4. Touch events (tap, button states) appear in every sensor packet alongside orientation and position data
   5. Each sensor packet is <= 45 bytes on the wire (verified with a byte-count logger), sent at >= 55Hz on a mid-range Android device — sequence numbers increment monotonically
 
-**Plans**: 6/7 plans executed
+**Plans**: 7/7 plans complete
 
 - [x] 05-01-PLAN.md
 - [x] 05-02-PLAN.md
@@ -168,7 +168,7 @@ Plans:
 - [x] 05-04-PLAN.md
 - [x] 05-05-PLAN.md
 - [x] 05-06-PLAN.md
-- [ ] 05-07-PLAN.md
+- [x] 05-07-PLAN.md
 
 ### Phase 6: Desktop Receive, Decode, and Rendering
 
@@ -231,7 +231,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 2. Signaling, TURN, and Deployment | 4/5 | In Progress|  |
 | 3. Session and Pairing | 4/4 | Complete    | 2026-07-07 |
 | 4. Phone Bootstrap and WebRTC Channels | 1/3 | In Progress|  |
-| 5. Sensor Fusion and Packet Encoding | 6/7 | In Progress|  |
+| 5. Sensor Fusion and Packet Encoding | 7/7 | Complete   | 2026-07-09 |
 | 6. Desktop Receive, Decode, and Rendering | 0/TBD | Not started | - |
 | 7. SDK Public API | 0/TBD | Not started | - |
 | 8. Demo Game | 0/TBD | Not started | - |

@@ -40,8 +40,8 @@
 - [x] **SENS-02**: Madgwick beta parameter is runtime-configurable; defaults to 0.1, ramps to 0.2–0.3 at cold start and ramps back down after convergence
 - [x] **SENS-03**: Phone runs ZUPT (Zero-Velocity Update) with adaptive variance + 300ms duration threshold — detects stationary moments and resets velocity accumulator to kill drift
 - [x] **SENS-04**: Phone runs Kalman filter over linear acceleration to produce a dead-reckoning position estimate with a `driftConfidence` scalar (0–1)
-- [ ] **SENS-05**: Gesture displacement: ZUPT gates a per-action position delta window — each swing/throw/flick produces a discrete `gestureDisplacement` vector reset between actions
-- [ ] **SENS-06**: Touch input: phone captures tap events and configurable on-screen button states, included in each sensor packet
+- [x] **SENS-05**: Gesture displacement: ZUPT gates a per-action position delta window — each swing/throw/flick produces a discrete `gestureDisplacement` vector reset between actions
+- [x] **SENS-06**: Touch input: phone captures tap events and configurable on-screen button states, included in each sensor packet
 
 ### Desktop Client
 
@@ -132,8 +132,8 @@
 | SENS-02 | Phase 5 | Complete |
 | SENS-03 | Phase 5 | Complete |
 | SENS-04 | Phase 5 | Complete |
-| SENS-05 | Phase 5 | Pending |
-| SENS-06 | Phase 5 | Pending |
+| SENS-05 | Phase 5 | Complete |
+| SENS-06 | Phase 5 | Complete |
 | PHONE-04 | Phase 5 | Complete |
 | PHONE-05 | Phase 5 | Complete |
 | DESK-01 | Phase 6 | Pending |
