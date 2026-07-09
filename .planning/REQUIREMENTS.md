@@ -29,7 +29,7 @@
 - [x] **PHONE-01**: Phone web app is accessible via QR scan with no app install required
 - [x] **PHONE-02**: Phone shows a "Grant Motion Access" button as first interaction on iOS 13+ (required user gesture before DeviceMotionEvent permission prompt)
 - [ ] **PHONE-03**: Phone establishes WebRTC P2P unreliable data channels to ALL desktops in the room — one to its paired desktop (primary) and one to each other player's desktop — so every desktop receives sensor data directly without relay
-- [ ] **PHONE-04**: Phone sends sensor packets at the maximum available device rate (~60–100Hz) over the unreliable data channel
+- [x] **PHONE-04**: Phone sends sensor packets at the maximum available device rate (~60–100Hz) over the unreliable data channel
 - [x] **PHONE-05**: Phone encodes each sensor packet as compact binary (~40 bytes) using MessagePack — includes sequence number, timestamp, orientation quaternion, gesture displacement, dead-reckoning position, touch events, drift confidence
 - [ ] **PHONE-06**: Phone sends a heartbeat every 5 seconds to prevent slot eviction and detect connection loss
 - [ ] **PHONE-07**: Phone activates Wake Lock API to prevent screen lock from killing the sensor stream
@@ -134,7 +134,7 @@
 | SENS-04 | Phase 5 | Pending |
 | SENS-05 | Phase 5 | Pending |
 | SENS-06 | Phase 5 | Pending |
-| PHONE-04 | Phase 5 | Pending |
+| PHONE-04 | Phase 5 | Complete |
 | PHONE-05 | Phase 5 | Complete |
 | DESK-01 | Phase 6 | Pending |
 | DESK-02 | Phase 6 | Pending |
