@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Signaling, TURN, and Deployment** - WebRTC ICE signaling broker, coturn with host networking, ephemeral TURN credentials, full Docker Compose stack (completed 2026-07-07)
 - [x] **Phase 3: Session and Pairing** - Room join, QR code + short code pairing, slot assignment, reconnect hold, 2-8 player support, room lifecycle events (completed 2026-07-07)
 - [ ] **Phase 4: Phone Bootstrap and WebRTC Channels** - Phone web app delivery, iOS DeviceMotion permission gate, Wake Lock, heartbeat, unreliable data channels to all desktops
-- [ ] **Phase 5: Sensor Fusion and Packet Encoding** - On-device Madgwick, adaptive ZUPT, Kalman dead-reckoning, gesture displacement, touch capture, 40-byte binary packet at 60Hz
+- [ ] **Phase 5: Sensor Fusion and Packet Encoding** - On-device Madgwick, adaptive ZUPT, Kalman dead-reckoning, gesture displacement, touch capture, 36-byte binary DataView packet at 60Hz
 - [ ] **Phase 6: Desktop Receive, Decode, and Rendering** - WebTransport desktop connection, WebRTC peer accept from all phones, binary decode, sequence-drop, target-state store, Three.js slerp loop
 - [ ] **Phase 7: SDK Public API** - npm package `immersive-rt`, imperative + event APIs, TypeScript types, latency overlay, drift-honest naming, raw orientation opt-in
 - [ ] **Phase 8: Demo Game** - Multi-player Three.js scene, orientation-driven objects, gesture-launched flick action, latency overlay always visible
@@ -148,7 +148,7 @@ Plans:
 
 ### Phase 5: Sensor Fusion and Packet Encoding
 
-**Goal**: The phone runs a full on-device sensor pipeline — Madgwick quaternion fusion, adaptive ZUPT dead-reckoning reset, Kalman position estimate — and encodes every output at the maximum device sample rate into a 40-byte binary MessagePack packet transmitted over the unreliable data channel
+**Goal**: The phone runs a full on-device sensor pipeline — Madgwick quaternion fusion, adaptive ZUPT dead-reckoning reset, Kalman position estimate — and encodes every output at the maximum device sample rate into a 36-byte binary DataView packet (schema v1) transmitted over the unreliable data channel
 **Mode:** mvp
 **Depends on**: Phase 4
 **Requirements**: SENS-01, SENS-02, SENS-03, SENS-04, SENS-05, SENS-06, PHONE-04, PHONE-05
