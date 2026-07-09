@@ -140,7 +140,14 @@ export function updateMadgwick(e: DeviceMotionEvent): Quaternion {
     safeFloat(a.z) / 9.81,
   );
 
-  const q = ahrs.getQuaternion(); // returns { w, x, y, z }
+  const q = ahrs.getQuaternion();
+  // Madgwick singularity (zero-gradient, e.g. identity + perfectly vertical gravity)
+  // produces NaN that permanently corrupts _ahrsInner. Rebuild the instance to recover
+  // — same pattern as the beta-change rebuild (T-05-01).
+  if (!isFinite(q.w) || !isFinite(q.x) || !isFinite(q.y) || !isFinite(q.z)) {
+    _ahrsInner = new AHRS({ sampleInterval: 60, algorithm: 'Madgwick', beta: _beta });
+    return { w: 1, x: 0, y: 0, z: 0 };
+  }
   return { w: q.w, x: q.x, y: q.y, z: q.z };
 }
 

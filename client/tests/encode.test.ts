@@ -145,10 +145,10 @@ describe('safeFloat', () => {
 // ---------------------------------------------------------------------------
 
 describe('computeCalibration', () => {
-  it('constant samples → zero variance → threshold 0, kalmanQ 0', () => {
+  it('constant samples → zero variance → threshold floored at 0.001, kalmanQ floored at 0.0001 (CR-02)', () => {
     const result = computeCalibration([1, 1, 1, 1, 1]);
-    expect(result.threshold).toBe(0);
-    expect(result.kalmanQ).toBe(0);
+    expect(result.threshold).toBeGreaterThanOrEqual(0.001);
+    expect(result.kalmanQ).toBeGreaterThanOrEqual(0.0001);
   });
 
   it('[0, 2] → variance 1 → threshold 2, kalmanQ 0.1', () => {
