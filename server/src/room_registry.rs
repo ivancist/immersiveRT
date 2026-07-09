@@ -494,6 +494,9 @@ impl RoomRegistry {
                 info.client_id = client_id.to_string();
                 info.phone_client_id = Some(client_id.to_string());
                 info.status = SlotStatus::Connected;
+                // Reset heartbeat clock so the monitor doesn't immediately re-fire
+                // (elapsed was already > 65s from the disconnect period).
+                info.last_heartbeat = Some(std::time::Instant::now());
             }
         }
         // DashMap RefMut dropped here.

@@ -44,14 +44,24 @@ notes: |
 
 ### 5. Heartbeat + slot disconnect — background phone for 65+ seconds
 expected: Server marks slot Disconnected within 65s of silence; heartbeat-miss broadcast reaches desktops; slot held for 60s reconnect window (not evicted)
-result: [pending]
+result: pass
+notes: |
+  Verified: 3 WT drop/reconnect cycles across 7-minute session, all reconnect-ok.
+  No double heartbeat-miss (last_heartbeat reset in handle_reconnect).
+  No invalid_token (is_phone_client guard prevents premature slot release from relay exit).
+  After 3rd reconnect, WebRTC ICE failed (iOS network path stale after long background);
+  onconnectionstatechange=failed triggers immediate renegotiation (openChannelToPeer),
+  new offer/answer in ~0.02s, DC-OPEN confirmed on both sides within 1s.
+  Desktop event log shows player-disconnected/reconnected (handleRoomEvent wired).
+  Fixes applied: is_phone_client relay guard (ws+wt), last_heartbeat reset on reconnect,
+  WebRTC auto-renegotiate on connectionState=failed, room-event handler wired to handleRoomEvent.
 
 ## Summary
 
 total: 5
-passed: 4
+passed: 5
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 

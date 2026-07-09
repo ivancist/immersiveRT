@@ -578,11 +578,17 @@ function openChannelToPeer(peerId) {
     phoneLog('conn=' + pc.connectionState + ' p=' + ptag);
     console.info('[WebRTC] connectionState=' + pc.connectionState + ' peer=' + ptag);
     if (pc.connectionState === 'failed') {
-      // Mark channel as lost so reconnect logic reopens it.
+      // Mark channel as lost.
       if (channelIsOpen) {
         channelIsOpen = false;
         if (openChannelCount > 0) { openChannelCount--; }
         updateConnectingUI();
+      }
+      // Reopen immediately if transport is up — don't wait for next WT reconnect cycle.
+      if (registered) {
+        peerConnections.delete(peerId);
+        try { pc.close(); } catch (e) {}
+        openChannelToPeer(peerId);
       }
     }
   };

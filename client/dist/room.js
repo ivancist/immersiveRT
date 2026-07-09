@@ -210,8 +210,7 @@ function onServerMessage(msg) {
       }
       break;
     case 'room-event':
-      console.info('[Server] room-event:', msg.payload && msg.payload.event,
-                   'slot=' + (msg.payload && msg.payload.slot));
+      handleRoomEvent(msg.payload || {});
       break;
     default:
       console.warn('[WS] Unknown message type:', msg.type);
