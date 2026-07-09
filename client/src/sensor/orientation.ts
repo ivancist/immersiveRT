@@ -98,21 +98,33 @@ export function eulerToQuat(alpha: number, beta: number, gamma: number): Quatern
 // ---------------------------------------------------------------------------
 
 /**
- * Exported Madgwick filter instance.
+ * Madgwick filter instance — wrapped to expose a functional beta setter.
+ *
+ * ahrs@1.3.3 stores its gain as a closure-local variable in Madgwick.js, so
+ * writing to `instance.beta` has no effect on filter behaviour.  The wrapper
+ * below rebuilds the AHRS instance whenever beta changes; quaternion state
+ * (q0-q3) is lost on rebuild, which is acceptable during the convergence period.
  *
  * algorithm: 'Madgwick' — D-05 mandates Madgwick (not Mahony) for the secondary path.
  * sampleInterval: 60    — matches the 60 Hz Device Motion API ceiling (iOS Safari).
- * beta: 0.3             — cold-start high; rampBeta() steps it toward 0.1 on convergence.
- *
- * NOTE: `ahrs.beta` is tracked as a JavaScript property on this instance for
- * rampBeta to read/write.  The Madgwick closure was initialized with beta=0.3
- * at construction; real-device beta ramp tuning is a known open item
- * (STATE.md blocker: Madgwick beta empirical tuning).
+ * Initial beta: 0.3     — rampBeta() steps it toward BETA_FLOOR on convergence.
  */
-export const ahrs = Object.assign(
-  new AHRS({ sampleInterval: 60, algorithm: 'Madgwick', beta: 0.3 }),
-  { beta: 0.3 as number },
-);
+let _beta = 0.3;
+let _ahrsInner = new AHRS({ sampleInterval: 60, algorithm: 'Madgwick', beta: _beta });
+
+export const ahrs = {
+  get beta() { return _beta; },
+  set beta(v: number) {
+    if (v === _beta) { return; }
+    _beta = v;
+    // Rebuild the filter with the new beta — the only way to change the gain
+    // in ahrs 1.3.3 since beta is a closure-local variable in Madgwick.js.
+    // State (q0-q3) is lost on rebuild — acceptable during convergence.
+    _ahrsInner = new AHRS({ sampleInterval: 60, algorithm: 'Madgwick', beta: _beta });
+  },
+  getQuaternion() { return _ahrsInner.getQuaternion(); },
+  update(...args: Parameters<typeof _ahrsInner.update>) { return _ahrsInner.update(...args); },
+};
 
 /**
  * Feed a raw DeviceMotionEvent into the Madgwick filter and return the current
