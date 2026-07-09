@@ -1,0 +1,951 @@
+/* room.ts — ImmersiveRT SPA router, WS client, QR render, event log, reconnect
+ * TypeScript migration of room.js (Phase 5, D-02). Behavior-preserving — no new logic.
+ * QRCode is loaded from CDN (jsdelivr); typed via ambient declaration below.
+ * All DOM access via vanilla browser APIs only.
+ */
+
+// Ambient declaration for the QRCode CDN global (qrcode@1.4.4 via jsdelivr).
+// Only the shape that room.ts actually calls is typed here.
+declare const QRCode: {
+  toCanvas: (
+    canvas: HTMLCanvasElement,
+    text: string,
+    options: {
+      width: number;
+      margin: number;
+      color: { dark: string; light: string };
+      errorCorrectionLevel: string;
+    },
+    callback: (err: Error | null | undefined) => void
+  ) => void;
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Shared WS state
+// ──────────────────────────────────────────────────────────────────────────────
+let ws: WebSocket | null = null;
+let myId: string | null = null;
+let currentRoom: { slot: number; room_code: string; iceServers?: RTCIceServer[] | null } | null = null;
+let wsReady = false;    // true once register ack confirmed (open + registered)
+const pendingMessageQueue: string[] = []; // messages queued before WS is ready
+let pendingUsername: string | null = null; // username sent with join-room, used in handleJoinAck
+
+// WebRTC state — desktop side (Phase 4 Plan 02: minimal answerer for PHONE-03)
+const desktopPeers = new Map<string, RTCPeerConnection>(); // phoneId → RTCPeerConnection
+const pendingICE = new Map<string, RTCIceCandidateInit[]>(); // phoneId → ICE candidates queued before setRemoteDescription resolves
+
+// Diagnostic: set true to force TURN-relay-only ICE (bypasses direct LAN path).
+// Useful to isolate whether DTLS failure is specific to the direct host-to-host path.
+const DEBUG_FORCE_RELAY = false;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────────
+function showView(id: string): void {
+  const views = document.querySelectorAll<HTMLElement>(
+    '#view-lobby, #view-room, #view-phone'
+  );
+  views.forEach(function (v) { v.hidden = true; });
+  const target = document.getElementById(id);
+  if (target) { target.hidden = false; }
+}
+
+function showError(elementId: string, message: string): void {
+  const el = document.getElementById(elementId);
+  if (!el) { return; }
+  el.textContent = message;
+  el.classList.add('error-msg--visible');
+  (el as HTMLElement).style.display = 'block';
+}
+
+function clearError(elementId: string): void {
+  const el = document.getElementById(elementId);
+  if (!el) { return; }
+  el.textContent = '';
+  el.classList.remove('error-msg--visible');
+  (el as HTMLElement).style.display = '';
+}
+
+function setInputError(inputId: string): void {
+  const el = document.getElementById(inputId);
+  if (el) { el.classList.add('input--error'); }
+}
+
+function clearInputError(inputId: string): void {
+  const el = document.getElementById(inputId);
+  if (el) { el.classList.remove('input--error'); }
+}
+
+function disableButton(id: string, loadingText?: string): void {
+  const btn = document.getElementById(id) as HTMLButtonElement | null;
+  if (!btn) { return; }
+  btn.disabled = true;
+  if (loadingText) { btn.textContent = loadingText; }
+}
+
+function enableButton(id: string, originalText?: string): void {
+  const btn = document.getElementById(id) as HTMLButtonElement | null;
+  if (!btn) { return; }
+  btn.disabled = false;
+  if (originalText) { btn.textContent = originalText; }
+}
+
+function formatTimestamp(date?: Date): string {
+  const d = date || new Date();
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+  return '[' + h + ':' + m + ':' + s + ']';
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// WebSocket client
+// ──────────────────────────────────────────────────────────────────────────────
+function connectWS(onOpenCallback: (() => void) | null): void {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    // Already connected or connecting; call callback if open
+    if (ws.readyState === WebSocket.OPEN && onOpenCallback) {
+      onOpenCallback();
+    } else if (onOpenCallback) {
+      // Queue to run after open
+      const prevOnOpen = ws.onopen;
+      ws.onopen = function (evt: Event) {
+        if (prevOnOpen) { prevOnOpen.call(ws!, evt); }
+        onOpenCallback();
+      };
+    }
+    return;
+  }
+
+  const serverWsUrl = 'wss://' + location.hostname + ':9090';
+  ws = new WebSocket(serverWsUrl);
+  wsReady = false;
+
+  ws.onopen = function () {
+    myId = crypto.randomUUID();
+    ws!.send(JSON.stringify({ type: 'register', from: myId, to: '', payload: {} }));
+    wsReady = true;
+
+    // Flush queued messages
+    while (pendingMessageQueue.length > 0) {
+      const queued = pendingMessageQueue.shift();
+      if (queued) { ws!.send(queued); }
+    }
+
+    if (onOpenCallback) { onOpenCallback(); }
+  };
+
+  ws.onmessage = function (evt: MessageEvent) {
+    let msg: Record<string, unknown>;
+    try {
+      msg = JSON.parse(evt.data as string) as Record<string, unknown>;
+    } catch (e) {
+      console.warn('[WS] Malformed message, ignoring:', e);
+      return;
+    }
+    onServerMessage(msg);
+  };
+
+  ws.onclose = function () {
+    wsReady = false;
+    updateConnectionStatus('Disconnected');
+    // Attempt reconnect after 3s if we are on room page
+    if (currentRoom) {
+      setTimeout(function () {
+        connectWS(null);
+      }, 3000);
+    }
+  };
+
+  ws.onerror = function (err: Event) {
+    console.error('[WS] Connection error:', err);
+    wsReady = false;
+    updateConnectionStatus('Disconnected');
+  };
+}
+
+function sendMessage(type: string, payload: Record<string, unknown>): void {
+  const msg = JSON.stringify({ type: type, from: myId, to: '', payload: payload });
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(msg);
+  } else {
+    // Queue for when connection is ready
+    pendingMessageQueue.push(msg);
+  }
+}
+
+function sendTo(type: string, to: string, payload: unknown): void {
+  const msg = JSON.stringify({ type: type, from: myId, to: to, payload: payload });
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(msg);
+  } else {
+    pendingMessageQueue.push(msg);
+  }
+}
+
+function updateConnectionStatus(text: string): void {
+  const el = document.getElementById('connection-status');
+  if (el) { el.textContent = text; }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Server message dispatcher
+// ──────────────────────────────────────────────────────────────────────────────
+function onServerMessage(msg: Record<string, unknown>): void {
+  switch (msg.type) {
+    case 'join-ack':
+      handleJoinAck(msg.payload as Record<string, unknown>);
+      break;
+    case 'join-error':
+      handleJoinError(((msg.payload as Record<string, unknown>)?.reason) as string);
+      break;
+    case 'room-event':
+      handleRoomEvent(msg.payload as Record<string, unknown>);
+      break;
+    case 'pair-ack':
+      handlePairAck(msg.payload as Record<string, unknown>);
+      break;
+    case 'pair-error':
+      handlePairError(msg.payload as Record<string, unknown>);
+      break;
+    case 'leave-ack':
+      // Slot freed on server — no action needed; WS stays open for next join.
+      break;
+    case 'offer':
+      handleOffer(msg);
+      break;
+    case 'ice-candidate':
+      handleIceCandidate(msg);
+      break;
+    case 'player-ready':
+      handlePlayerReady(msg);
+      break;
+    case 'phone-state':
+      if (msg.payload && (msg.payload as Record<string, unknown>).state === 'heartbeat-miss') {
+        console.info('[Server] heartbeat-miss slot=' + (msg.payload as Record<string, unknown>).slot);
+      }
+      break;
+    default:
+      console.warn('[WS] Unknown message type:', msg.type);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// WebRTC answerer — minimal desktop side (PHONE-03 / RESEARCH A4)
+// Full receive pipeline, target-state store, and TURN path are Phase 6 (DESK-02).
+// ──────────────────────────────────────────────────────────────────────────────
+function handleOffer(msg: Record<string, unknown>): void {
+  const phoneId = msg.from as string;
+  const tag = phoneId.slice(0, 8);
+
+  // Close zombie PC from a previous offer by the same phone.
+  const oldPc = desktopPeers.get(phoneId);
+  if (oldPc) {
+    try { oldPc.close(); } catch (e) { /* ignore */ }
+    desktopPeers.delete(phoneId);
+  }
+
+  const iceConfig: RTCConfiguration = {
+    iceServers: (currentRoom && currentRoom.iceServers) || [{ urls: 'stun:' + location.hostname + ':3478' }]
+  };
+  if (DEBUG_FORCE_RELAY) { iceConfig.iceTransportPolicy = 'relay'; }
+  const pc = new RTCPeerConnection(iceConfig);
+
+  pc.onconnectionstatechange = function () {
+    console.info('[WebRTC] connectionState=' + pc.connectionState + ' phone=' + tag);
+  };
+  pc.oniceconnectionstatechange = function () {
+    console.info('[WebRTC] iceConnectionState=' + pc.iceConnectionState + ' phone=' + tag);
+  };
+  pc.onicegatheringstatechange = function () {
+    console.info('[WebRTC] iceGatheringState=' + pc.iceGatheringState + ' phone=' + tag);
+  };
+
+  pc.ondatachannel = function (evt: RTCDataChannelEvent) {
+    const dc = evt.channel;
+    dc.onopen = function () {
+      console.info('[WebRTC] data channel open phone=' + tag);
+      sendMessage('rtc-channel-ready', { with: phoneId });
+    };
+  };
+
+  pc.onicecandidate = function (evt: RTCPeerConnectionIceEvent) {
+    if (!evt.candidate) { return; }
+    sendTo('ice-candidate', phoneId, evt.candidate);
+  };
+
+  // Initialise ICE queue BEFORE the async chain so candidates arriving during
+  // setRemoteDescription are buffered rather than dropped.
+  pendingICE.set(phoneId, []);
+
+  const offerDesc = msg.payload as RTCSessionDescriptionInit;
+
+  pc.setRemoteDescription(offerDesc)
+    .then(function () {
+      // Only now is addIceCandidate safe — commit pc and drain the queue.
+      desktopPeers.set(phoneId, pc);
+      const queued = pendingICE.get(phoneId) || [];
+      pendingICE.delete(phoneId);
+      queued.forEach(function (c) {
+        pc.addIceCandidate(c).catch(function (e: unknown) {
+          console.warn('[WebRTC] queued addIceCandidate failed:', e);
+        });
+      });
+      const sdp = (offerDesc && offerDesc.sdp) || '';
+      const offerSetup = sdp.match(/a=setup:(\S+)/);
+      console.info('[WebRTC] offer a=setup:' + (offerSetup ? offerSetup[1] : 'not found') + ' phone=' + tag);
+      return pc.createAnswer();
+    })
+    .then(function (answer: RTCSessionDescriptionInit) {
+      // iOS Safari ≥18 silently ignores DTLS ClientHello when it is forced into the passive
+      // role (i.e. remote a=setup:active). Flip desktop to passive so Safari (which sent
+      // actpass) must be the DTLS client and initiates the handshake instead.
+      const patchedSdp = (answer.sdp || '').replace(/a=setup:active/g, 'a=setup:passive');
+      const patchedAnswer: RTCSessionDescriptionInit = { type: 'answer', sdp: patchedSdp };
+      console.info('[WebRTC] answer a=setup:passive (patched for iOS Safari) phone=' + tag);
+      return pc.setLocalDescription(patchedAnswer).then(function () { return patchedAnswer; });
+    })
+    .then(function (patchedAnswer: RTCSessionDescriptionInit) {
+      sendTo('answer', phoneId, patchedAnswer);
+    })
+    .catch(function (err: unknown) {
+      console.warn('[WebRTC] handleOffer failed for phone', phoneId, ':', err);
+      desktopPeers.delete(phoneId);
+      pendingICE.delete(phoneId);
+    });
+}
+
+function handleIceCandidate(msg: Record<string, unknown>): void {
+  const from = msg.from as string;
+  const pc = desktopPeers.get(from);
+  if (pc) {
+    pc.addIceCandidate(msg.payload as RTCIceCandidateInit).catch(function (err: unknown) {
+      console.warn('[WebRTC] addIceCandidate failed:', err);
+    });
+    return;
+  }
+  // setRemoteDescription not yet resolved — buffer the candidate.
+  const queue = pendingICE.get(from);
+  if (queue) { queue.push(msg.payload as RTCIceCandidateInit); }
+}
+
+function handlePlayerReady(msg: Record<string, unknown>): void {
+  const payload = (msg && msg.payload) ? msg.payload as Record<string, unknown> : {};
+  console.info('[WebRTC] player-ready received:', payload);
+  appendEventLog('player-ready', (payload.slot as number) || 0, (payload.username as string) || '');
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Desktop page
+// ──────────────────────────────────────────────────────────────────────────────
+function initDesktopPage(): void {
+  // Pre-warm WS connection (D-11)
+  connectWS(null);
+
+  // Button wiring
+  const btnCreate    = document.getElementById('btn-create-room');
+  const btnJoin      = document.getElementById('btn-join-room');
+  const btnContinue  = document.getElementById('btn-continue');
+  const btnJoinSubmit = document.getElementById('btn-join-submit');
+  const btnBackCreate = document.getElementById('btn-back-create');
+  const btnBackJoin  = document.getElementById('btn-back-join');
+  const gameSelect   = document.getElementById('view-game-select');
+  const joinForm     = document.getElementById('view-join-form');
+
+  if (btnCreate) {
+    btnCreate.addEventListener('click', function () { showSubForm(gameSelect); });
+  }
+
+  if (btnJoin) {
+    btnJoin.addEventListener('click', function () { showSubForm(joinForm); });
+  }
+
+  if (btnBackCreate) {
+    btnBackCreate.addEventListener('click', showLobbyActions);
+  }
+
+  if (btnBackJoin) {
+    btnBackJoin.addEventListener('click', showLobbyActions);
+  }
+
+  if (btnContinue) {
+    btnContinue.addEventListener('click', function () {
+      const gameTypeEl = document.getElementById('game-type') as HTMLSelectElement | null;
+      const gameType = gameTypeEl ? gameTypeEl.value : 'placeholder';
+      createRoom(gameType);
+    });
+  }
+
+  if (btnJoinSubmit) {
+    btnJoinSubmit.addEventListener('click', function () {
+      const codeEl = document.getElementById('input-room-code') as HTMLInputElement | null;
+      const userEl = document.getElementById('input-username') as HTMLInputElement | null;
+      const roomCode = codeEl ? codeEl.value : '';
+      const username = userEl ? userEl.value : '';
+      joinRoom(roomCode, username);
+    });
+  }
+
+  // Auto-uppercase room code input
+  const codeInput = document.getElementById('input-room-code') as HTMLInputElement | null;
+  if (codeInput) {
+    codeInput.addEventListener('input', function () {
+      const self = codeInput;
+      const cursor = self.selectionStart;
+      self.value = self.value.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 6);
+      self.setSelectionRange(cursor, cursor);
+    });
+  }
+
+  // Handle browser back/forward
+  window.addEventListener('popstate', function (evt: PopStateEvent) {
+    const state = evt.state as { room_code?: string; slot?: number } | null;
+    if (state && state.room_code) {
+      // Re-render room page without QR (pairing_url not stored in history state)
+      renderRoomPage(
+        state.slot || 0,
+        state.room_code,
+        null /* pairing_url not available from history */
+      );
+    } else {
+      // Back to lobby
+      showView('view-lobby');
+      currentRoom = null;
+    }
+  });
+
+  // If we're already on a /room/ path (e.g. user refreshed), check sessionStorage
+  const pathMatch = window.location.pathname.match(/^\/room\/([A-Z0-9]+)$/i);
+  if (pathMatch) {
+    const codeFromPath = pathMatch[1].toUpperCase();
+    // sessionStorage preferred (tab-specific, reload-safe); localStorage fallback for new-tab reconnect.
+    const storedSlot   = sessionStorage.getItem('slot_' + codeFromPath)
+                      || localStorage.getItem('slot_' + codeFromPath);
+    if (storedSlot) {
+      const slotNum = parseInt(storedSlot, 10);
+      currentRoom = { slot: slotNum, room_code: codeFromPath };
+      renderRoomPage(slotNum, codeFromPath, null);
+      // Only reconnect when already on the room path (D-17)
+      connectWS(function () { sendReconnect(codeFromPath, slotNum); });
+    } else {
+      // On /room/ path but no session data — show join form pre-filled with the code.
+      history.replaceState(null, '', '/');
+      const codeInputEl = document.getElementById('input-room-code') as HTMLInputElement | null;
+      if (codeInputEl) { codeInputEl.value = codeFromPath; }
+      if (joinForm) { showSubForm(joinForm); }
+    }
+  }
+}
+
+function createRoom(gameType: string): void {
+  const userEl = document.getElementById('input-create-username') as HTMLInputElement | null;
+  const rawName = userEl ? userEl.value.trim() : '';
+
+  if (!rawName) {
+    showError('error-create-username', 'Please enter your name.');
+    if (userEl) { userEl.classList.add('input--error'); }
+    return;
+  }
+  if (rawName.length > 64) {
+    showError('error-create-username', 'Name must be 64 characters or fewer.');
+    if (userEl) { userEl.classList.add('input--error'); }
+    return;
+  }
+  if (userEl) { userEl.classList.remove('input--error'); }
+  clearError('error-create-username');
+
+  disableButton('btn-continue', 'Creating...');
+  pendingUsername = rawName;
+  sendMessage('join-room', {
+    username: rawName,
+    room_code: '',
+    game_type: gameType
+  });
+}
+
+function joinRoom(roomCode: string, username: string): void {
+  // Client-side validation
+  let valid = true;
+
+  clearInputError('input-room-code');
+  clearInputError('input-username');
+  clearError('error-room-code');
+  clearError('error-username');
+  clearError('error-join');
+
+  const cleanCode = roomCode.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 6);
+  if (cleanCode.length < 1) {
+    setInputError('input-room-code');
+    showError('error-room-code', 'Please enter a room code.');
+    valid = false;
+  }
+
+  const cleanUsername = username.trim();
+  // Printable ASCII: chars 32–126
+  const hasNonPrintable = /[^\x20-\x7E]/.test(cleanUsername);
+  if (cleanUsername.length < 1) {
+    setInputError('input-username');
+    showError('error-username', 'Please enter a username.');
+    valid = false;
+  } else if (cleanUsername.length > 64) {
+    setInputError('input-username');
+    showError('error-username', 'Username must be 64 characters or fewer.');
+    valid = false;
+  } else if (hasNonPrintable) {
+    setInputError('input-username');
+    showError('error-username', 'Username must contain only printable characters.');
+    valid = false;
+  }
+
+  if (!valid) { return; }
+
+  pendingUsername = cleanUsername;
+  disableButton('btn-join-submit', 'Joining...');
+  sendMessage('join-room', {
+    username: cleanUsername,
+    room_code: cleanCode,
+    game_type: 'placeholder'
+  });
+}
+
+function handleJoinAck(payload: Record<string, unknown>): void {
+  const slot           = payload.slot as number;
+  const roomCode       = payload.room_code as string;
+  const reconnectToken = payload.reconnect_token as string;
+  const pairingUrl     = payload.pairing_url as string | null;
+
+  // Store reconnect token — never log the value (T-03-09).
+  // sessionStorage: tab-specific, survives reload — primary slot key.
+  // localStorage slot: only written on first join (sessionStorage empty), so reconnects
+  //   don't overwrite the newest joiner's slot (which enables new-tab reconnect for the
+  //   most-recently-closed tab). Token keyed by room+slot — no cross-tab collision.
+  const isFirstJoin = !sessionStorage.getItem('slot_' + roomCode);
+  sessionStorage.setItem('slot_' + roomCode, String(slot));
+  if (isFirstJoin) {
+    localStorage.setItem('slot_' + roomCode, String(slot));
+  }
+  localStorage.setItem('token_' + roomCode + '_' + slot, reconnectToken);
+
+  currentRoom = { slot: slot, room_code: roomCode, iceServers: (payload.ice_servers as RTCIceServer[] | null) || null };
+
+  // Navigate to room URL — ONLY here, never before server approval (D-07)
+  history.pushState({ slot: slot, room_code: roomCode }, '', '/room/' + roomCode);
+
+  renderRoomPage(slot, roomCode, pairingUrl);
+
+  // Populate roster from snapshot (includes all current occupants).
+  const slots = payload.slots as Array<{ slot: number; status: string; username: string }> | undefined;
+  if (Array.isArray(slots)) {
+    slots.forEach(function (s) {
+      updateSlotRow(s.slot, s.status === 'hold' ? 'hold' : 'connected', s.username);
+    });
+  } else {
+    // Fallback: server didn't send snapshot — at least show own slot.
+    updateSlotRow(slot, 'connected', pendingUsername || 'Player');
+  }
+  if (pendingUsername) { appendEventLog('player-joined', slot, pendingUsername); }
+}
+
+function handleJoinError(reason: string): void {
+  // Reconnect failure while on room page — session expired or room gone.
+  if (currentRoom || reason === 'invalid_token') {
+    if (currentRoom) {
+      sessionStorage.removeItem('slot_' + currentRoom.room_code);
+      localStorage.removeItem('slot_' + currentRoom.room_code);
+      localStorage.removeItem('token_' + currentRoom.room_code + '_' + currentRoom.slot);
+    }
+    currentRoom = null;
+    history.replaceState(null, '', '/');
+    showView('view-lobby');
+    showLobbyActions();
+    showError('error-join', 'Session expired. Please join or create a new room.');
+    return;
+  }
+
+  enableButton('btn-continue', 'Continue');
+  enableButton('btn-join-submit', 'Join Room');
+
+  let message: string;
+  if (reason === 'room_not_found') {
+    message = 'Room not found. Double-check the code and try again.';
+  } else if (reason === 'room_full') {
+    message = 'This room is full (8/8 players). Ask the host for a different code.';
+  } else {
+    message = 'Could not join room. Check your connection and try again.';
+  }
+
+  showError('error-join', message);
+}
+
+function renderRoomPage(slot: number, roomCode: string, pairingUrl: string | null): void {
+  // Hide lobby, show room
+  const lobby = document.getElementById('view-lobby');
+  const room  = document.getElementById('view-room');
+  if (lobby) { lobby.hidden = true; }
+  if (room)  { room.hidden = false; }
+
+  // Update room title
+  const roomTitle = document.getElementById('room-title');
+  if (roomTitle) { roomTitle.textContent = 'Your Room: ' + roomCode; }
+
+  // Update short code (D-15)
+  const shortCode = document.getElementById('short-code');
+  if (shortCode) { shortCode.textContent = roomCode + '-' + slot; }
+
+  // Update connection status
+  updateConnectionStatus('Connected');
+
+  // Render QR code (only if we have the pairing URL)
+  if (pairingUrl) {
+    renderQR(pairingUrl);
+  } else {
+    // No pairing URL (e.g. after page refresh) — show fallback text
+    const canvas = document.getElementById('pairing-qr') as HTMLCanvasElement | null;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        canvas.width = 256;
+        canvas.height = 256;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 256, 256);
+        ctx.fillStyle = '#000000';
+        ctx.font = '13px monospace';
+        ctx.fillText('QR unavailable after', 10, 80);
+        ctx.fillText('page refresh.', 10, 100);
+        ctx.fillText('Use the short code', 10, 120);
+        ctx.fillText('above.', 10, 140);
+      }
+    }
+  }
+
+  // Wire leave button (re-wire each render to avoid duplicate listeners)
+  const leaveBtn = document.getElementById('btn-leave-room');
+  if (leaveBtn) {
+    leaveBtn.onclick = leaveRoom;
+  }
+
+  // Initialize slot roster
+  initSlotRoster(slot);
+}
+
+function renderQR(pairingUrl: string): void {
+  const canvas = document.getElementById('pairing-qr') as HTMLCanvasElement | null;
+  if (!canvas) { return; }
+
+  if (typeof QRCode === 'undefined') {
+    // CDN not loaded — show text fallback
+    if (canvas.parentElement) {
+      canvas.parentElement.innerHTML =
+        '<p style="color:#000;font-family:monospace;font-size:12px;word-break:break-all;padding:8px">Open: ' +
+        pairingUrl + '</p>';
+    }
+    return;
+  }
+
+  // Exact options from UI-SPEC — no deviation
+  QRCode.toCanvas(
+    canvas,
+    pairingUrl,
+    {
+      width: 256,
+      margin: 2,
+      color: { dark: '#000000', light: '#ffffff' },
+      errorCorrectionLevel: 'M'
+    },
+    function (err: Error | null | undefined) {
+      if (err) {
+        // Fallback per UI-SPEC §QR Code Fallback
+        if (canvas.parentElement) {
+          canvas.parentElement.innerHTML =
+            '<p style="color:#000;font-family:monospace;font-size:12px;word-break:break-all;padding:8px">Open: ' +
+            pairingUrl + '</p>';
+        }
+      }
+    }
+  );
+}
+
+function initSlotRoster(mySlot: number): void {
+  const roster = document.getElementById('slot-roster');
+  if (!roster) { return; }
+
+  roster.innerHTML = ''; // clear any existing rows
+
+  for (let i = 1; i <= 8; i++) {
+    const li = document.createElement('li');
+    li.className = 'slot-row';
+    li.dataset.slot = String(i);
+
+    if (i === mySlot) {
+      li.classList.add('own-slot');
+    }
+
+    const dot = document.createElement('span');
+    dot.className = 'status-dot dot--empty';
+    dot.dataset.slotDot = String(i);
+
+    const slotLabel = document.createElement('span');
+    slotLabel.className = 'slot-label';
+    slotLabel.textContent = 'Slot ' + i;
+
+    const slotUser = document.createElement('span');
+    slotUser.className = 'slot-username';
+    slotUser.dataset.slotUsername = String(i);
+    slotUser.textContent = 'Empty';
+
+    li.appendChild(dot);
+    li.appendChild(slotLabel);
+    li.appendChild(slotUser);
+    roster.appendChild(li);
+  }
+}
+
+function updateSlotRow(slotId: number, state: 'connected' | 'hold' | 'empty', username: string): void {
+  const dot    = document.querySelector<HTMLElement>('[data-slot-dot="' + slotId + '"]');
+  const userEl = document.querySelector<HTMLElement>('[data-slot-username="' + slotId + '"]');
+
+  if (!dot || !userEl) { return; }
+
+  // Reset dot classes
+  dot.className = 'status-dot';
+
+  switch (state) {
+    case 'connected':
+      dot.classList.add('dot--connected');
+      userEl.textContent = username || 'Player';
+      userEl.className = 'slot-username occupied';
+      break;
+    case 'hold':
+      dot.classList.add('dot--hold');
+      userEl.textContent = (username || 'Player') + ' (reconnecting...)';
+      userEl.className = 'slot-username';
+      break;
+    case 'empty':
+    default:
+      dot.classList.add('dot--empty');
+      userEl.textContent = 'Empty';
+      userEl.className = 'slot-username';
+      break;
+  }
+}
+
+function handleRoomEvent(payload: Record<string, unknown>): void {
+  const event    = payload.event as string;
+  const slot     = payload.slot as number;
+  const username = (payload.username as string) || '';
+
+  switch (event) {
+    case 'player-joined':
+      updateSlotRow(slot, 'connected', username);
+      appendEventLog('player-joined', slot, username);
+      break;
+    case 'player-disconnected':
+      updateSlotRow(slot, 'hold', username);
+      appendEventLog('player-disconnected', slot, username);
+      break;
+    case 'player-reconnected':
+      updateSlotRow(slot, 'connected', username);
+      appendEventLog('player-reconnected', slot, username);
+      break;
+    case 'player-left':
+      updateSlotRow(slot, 'empty', '');
+      appendEventLog('player-left', slot, username);
+      break;
+    case 'room-full':
+      appendEventLog('room-full', 0, '');
+      break;
+    default:
+      console.warn('[WS] Unknown room-event:', event);
+  }
+}
+
+function appendEventLog(event: string, slot: number, username: string): void {
+  const log = document.getElementById('event-log');
+  if (!log) { return; }
+
+  // Format log text per UI-SPEC copywriting contract
+  let text: string;
+  switch (event) {
+    case 'player-joined':
+      text = username + ' joined — slot ' + slot;
+      break;
+    case 'player-disconnected':
+      text = username + ' disconnected — waiting 60s for reconnect';
+      break;
+    case 'player-reconnected':
+      text = username + ' reconnected — slot ' + slot;
+      break;
+    case 'player-left':
+      text = username + ' left — slot ' + slot;
+      break;
+    case 'room-full':
+      text = 'Room is full (8/8 players)';
+      break;
+    case 'player-ready':
+      text = (username ? username : 'Player') + ' ready — slot ' + slot;
+      break;
+    default:
+      text = event + ' (slot ' + slot + ')';
+  }
+
+  const entry = document.createElement('div');
+  entry.className = 'event-entry';
+
+  const ts = document.createElement('span');
+  ts.className = 'event-ts';
+  ts.textContent = formatTimestamp(new Date());
+
+  const body = document.createElement('span');
+  body.textContent = text;
+
+  entry.appendChild(ts);
+  entry.appendChild(body);
+
+  // Max 50 entries — remove oldest when limit reached
+  if (log.children.length >= 50) {
+    log.removeChild(log.firstChild!);
+  }
+
+  log.appendChild(entry);
+
+  // Auto-scroll to bottom
+  log.scrollTop = log.scrollHeight;
+}
+
+function leaveRoom(): void {
+  // Clear session so reload doesn't re-enter the room
+  if (currentRoom) {
+    sessionStorage.removeItem('slot_' + currentRoom.room_code);
+    localStorage.removeItem('slot_' + currentRoom.room_code);
+    localStorage.removeItem('token_' + currentRoom.room_code + '_' + currentRoom.slot);
+  }
+  currentRoom = null;
+  history.pushState(null, '', '/');
+  showView('view-lobby');
+  showLobbyActions();
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // Send leave-room and keep the WS open — server frees the slot immediately.
+    // Closing the WS races with the data frame (FIN can arrive before the message),
+    // triggering on_client_disconnect which starts a hold timer instead.
+    // Keeping the WS open eliminates the race; the connection is reused for the next join.
+    ws.send(JSON.stringify({ type: 'leave-room', from: myId, to: '', payload: {} }));
+  } else {
+    if (ws) { ws.close(); ws = null; }
+    connectWS(null);
+  }
+}
+
+function showLobbyActions(): void {
+  const lobbyActions = document.getElementById('lobby-actions');
+  const gameSelect   = document.getElementById('view-game-select');
+  const joinForm     = document.getElementById('view-join-form');
+  if (gameSelect)   { gameSelect.hidden = true; }
+  if (joinForm)     { joinForm.hidden = true; }
+  if (lobbyActions) { lobbyActions.hidden = false; }
+}
+
+function showSubForm(form: HTMLElement | null): void {
+  const lobbyActions = document.getElementById('lobby-actions');
+  const gameSelect   = document.getElementById('view-game-select');
+  const joinForm     = document.getElementById('view-join-form');
+  if (lobbyActions) { lobbyActions.hidden = true; }
+  if (gameSelect)   { gameSelect.hidden = true; }
+  if (joinForm)     { joinForm.hidden = true; }
+  // Clear stale errors from previous attempts
+  clearError('error-join');
+  clearError('error-room-code');
+  clearError('error-username');
+  clearError('error-create-username');
+  if (form) { form.hidden = false; }
+}
+
+function sendReconnect(roomCode: string, slot: number): void {
+  const code  = roomCode || (currentRoom && currentRoom.room_code) || '';
+  const slotN = slot     || (currentRoom && currentRoom.slot) || 0;
+  if (!code || !slotN) { return; }
+  const token = localStorage.getItem('token_' + code + '_' + slotN);
+  if (token) {
+    // Never log the value (T-03-09)
+    sendMessage('reconnect', { reconnect_token: token });
+    console.info('[WS] Reconnect token sent.');
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Phone page
+// ──────────────────────────────────────────────────────────────────────────────
+function initPhonePage(): void {
+  showView('view-phone');
+
+  // Show initial pairing state
+  const pairingState = document.getElementById('pairing-state');
+  const successState = document.getElementById('success-state');
+  const errorState   = document.getElementById('error-state');
+
+  if (pairingState) { pairingState.hidden = false; }
+  if (successState) { successState.hidden = true; }
+  if (errorState)   { errorState.hidden = true; }
+
+  // Extract token from URL
+  const params = new URLSearchParams(location.search);
+  const token  = params.get('token');
+
+  if (!token) {
+    // No token in URL — show error immediately
+    showPhoneError('no_token');
+    return;
+  }
+
+  // Connect WS; on open, send pair message
+  connectWS(function () {
+    sendMessage('pair', { token: token });
+  });
+}
+
+function handlePairAck(_payload: Record<string, unknown>): void {
+  const pairingState = document.getElementById('pairing-state');
+  const successState = document.getElementById('success-state');
+
+  if (pairingState) { pairingState.hidden = true; }
+  if (successState) { successState.hidden = false; }
+}
+
+function handlePairError(payload: Record<string, unknown>): void {
+  const reason = (payload && payload.reason) ? payload.reason as string : 'unknown';
+  showPhoneError(reason);
+}
+
+function showPhoneError(reason: string): void {
+  const pairingState = document.getElementById('pairing-state');
+  const errorState   = document.getElementById('error-state');
+  const errorMsg     = document.getElementById('pair-error-msg');
+
+  if (pairingState) { pairingState.hidden = true; }
+  if (errorState)   { errorState.hidden = false; }
+
+  let message: string;
+  if (reason === 'token_expired') {
+    message = 'This pairing code has expired. Ask the desktop player to share a new one.';
+  } else if (reason === 'token_used') {
+    message = 'This pairing code has already been used. Ask the desktop player to share a new one.';
+  } else if (reason === 'no_token') {
+    message = 'Pairing failed: no token in URL.';
+  } else {
+    message = 'Pairing failed. Try scanning the QR code again.';
+  }
+
+  if (errorMsg) { errorMsg.textContent = message; }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Init — route to desktop or phone page
+// ──────────────────────────────────────────────────────────────────────────────
+function init(): void {
+  if (window.location.pathname.indexOf('/phone') === 0) {
+    initPhonePage();
+  } else {
+    initDesktopPage();
+  }
+}
+
+document.addEventListener('DOMContentLoaded', init);
