@@ -13,10 +13,13 @@
  *      unavailable, or fails to connect.
  */
 
-// ── Sensor pipeline imports (Plan 06) ────────────────────────────────────────
+// ── Sensor pipeline imports (Plan 06/07) ─────────────────────────────────────
 import { encodePacket, _packetBuf, runCalibration, safeFloat } from './sensor/encode';
-import { eulerToQuat } from './sensor/orientation';
-import type { SensorPacket, Quaternion } from './types';
+import { eulerToQuat, updateMadgwick, rampBeta } from './sensor/orientation';
+import { ZUPTDetector } from './sensor/zupt';
+import { Kalman1D } from './sensor/kalman';
+import { updateOverlay } from './sensor/devOverlay';
+import type { SensorPacket, Quaternion, Vector3 } from './types';
 
 // Marks this file as an ES module (prevents global-scope collision with room.ts).
 export {};
@@ -40,13 +43,24 @@ let registered = false;       // true once register ack confirmed; guards sendPh
 let reconnectToken: string | null = null;  // from pair-ack / join-ack; used for WT-drop WS reconnect
 let _reconnecting = false;    // true during attemptReconnect loop; suppresses ws.onclose → view-ended
 
-// ── Sensor pipeline state (Plan 06) ─────────────────────────────────────────
+// ── Sensor pipeline state (Plan 06/07) ───────────────────────────────────────
 let sessionStart = 0;                              // ms epoch at pipeline start
 let seq = 0;                                       // monotonic packet counter
 let primaryQuat: Quaternion = { w: 1, x: 0, y: 0, z: 0 }; // OS-fused orientation
-// Calibration params stored for Plan 07 (ZUPT + Kalman initialisation).
+// Calibration params.
 let _calThreshold = 0;
 let _calKalmanQ   = 0;
+
+// ── Dead-reckoning bounds (Plan 07 / T-05-16) ────────────────────────────────
+const POSITION_MAX = 100; // metres; bounds un-reset Kalman drift
+const GESTURE_MAX  = 100; // metres; bounds gesture displacement accumulator
+
+// ── Touch state (Plan 07 / SENS-06) ─────────────────────────────────────────
+let currentTouch = { active: false, x: 0, y: 0 };
+let touchListenersAttached = false;
+
+// ── Dev source-select flag (Plan 07 / D-04) ──────────────────────────────────
+let useMadgwick = false;
 
 // Promise resolvers for WS pair / reconnect request/response.
 let _pairResolve: ((msg: SignalingMessage) => void) | null = null;
@@ -682,6 +696,58 @@ function updateConnectingUI(): void {
   if (chanOpenEl) { chanOpenEl.textContent = String(openChannelCount); }
 }
 
+// ── Helpers (Plan 07) ────────────────────────────────────────────────────────
+
+/** Clamp v to [0, 1]. Used to normalise touch coordinates before uint16 write. */
+function clamp01(v: number): number { return Math.min(1, Math.max(0, v)); }
+
+/**
+ * L1 quaternion delta — per-frame convergence signal fed to rampBeta.
+ * A small frameDelta means the filter is converging; rampBeta will lower beta.
+ */
+function quatDelta(a: Quaternion, b: Quaternion): number {
+  return Math.abs(a.w - b.w) + Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z);
+}
+
+// ── Touch listeners (Plan 07 / SENS-06) ─────────────────────────────────────
+// Named handlers (not anonymous closures) so re-entry on reconnect never stacks
+// duplicate listeners behind the `touchListenersAttached` idempotency guard.
+
+function onTouchStart(e: TouchEvent): void {
+  const t = e.touches[0];
+  if (!t) { return; }
+  currentTouch.active = true;
+  currentTouch.x = clamp01(safeFloat(t.clientX) / window.innerWidth);
+  currentTouch.y = clamp01(safeFloat(t.clientY) / window.innerHeight);
+}
+
+function onTouchMove(e: TouchEvent): void {
+  const t = e.touches[0];
+  if (!t) { return; }
+  currentTouch.active = true;
+  currentTouch.x = clamp01(safeFloat(t.clientX) / window.innerWidth);
+  currentTouch.y = clamp01(safeFloat(t.clientY) / window.innerHeight);
+}
+
+// touchend/touchcancel: clear active but preserve last coordinates (D-13).
+function onTouchEnd(_e: TouchEvent): void {
+  currentTouch.active = false;
+}
+
+/**
+ * Attach touch listeners to document.body (idempotent — safe to call on
+ * every startSensorPipeline invocation, e.g. after a session reconnect).
+ * T-05-17 mitigation: `touchListenersAttached` guard + named handlers.
+ */
+function attachTouchListeners(): void {
+  if (touchListenersAttached) { return; }
+  touchListenersAttached = true;
+  document.body.addEventListener('touchstart',  onTouchStart, { passive: true });
+  document.body.addEventListener('touchmove',   onTouchMove,  { passive: true });
+  document.body.addEventListener('touchend',    onTouchEnd,   { passive: true });
+  document.body.addEventListener('touchcancel', onTouchEnd,   { passive: true });
+}
+
 // ── Sensor broadcast (Plan 06 / PHONE-04) ────────────────────────────────────
 /**
  * Fan the given Uint8Array out to every peer data channel that is open.
@@ -703,28 +769,48 @@ function broadcastPacket(uint8: Uint8Array<ArrayBuffer>): void {
   });
 }
 
-// ── Thin sensor pipeline (Plan 06 / PHONE-04, PHONE-05) ──────────────────────
+// ── Sensor pipeline (Plan 06/07 / PHONE-04, PHONE-05) ────────────────────────
 /**
  * Start the OS-orientation → encode → broadcast pipeline.
  *
- * THIN SLICE: orientation is real (OS-fused via eulerToQuat); position
- * (px/py/pz), gesture displacement (dx/dy/dz), driftConfidence, and touch
- * are zero/inactive placeholders.  Plan 07 replaces those with real
- * ZUPT-gated dead-reckoning and touch state (deepened, not reduced).
+ * Plan 07 fills every packet field with real data:
+ *   - ZUPT-gated Kalman dead-reckoning (px/py/pz + driftConfidence) — SENS-03/04
+ *   - Per-gesture displacement (dx/dy/dz, resets to zero after each ZUPT) — SENS-05
+ *   - Live touch state via currentTouch (touchActive/X/Y) — SENS-06
+ *   - Dev-only Madgwick overlay + source-select (D-04/D-15)
  *
- * @param zuptThreshold  Variance threshold from calibration (stored for Plan 07).
- * @param kalmanQ        Kalman process-noise Q from calibration (stored for Plan 07).
+ * @param zuptThreshold  Variance threshold from calibration.
+ * @param kalmanQ        Kalman process-noise Q from calibration.
  */
 function startSensorPipeline(zuptThreshold: number, kalmanQ: number): void {
-  // Store calibration params — Plan 07 consumes these for ZUPT/Kalman init.
+  // Store calibration params.
   _calThreshold = zuptThreshold;
   _calKalmanQ   = kalmanQ;
 
   sessionStart = Date.now();
 
-  // Dev Hz/byte log state.
-  let _pktCount  = 0;
-  let _lastLogMs = sessionStart;
+  // ── Dead-reckoning state (closure-local — reinit once per session) ──────────
+  const zupt = new ZUPTDetector(300, zuptThreshold);
+  const kalmans = [new Kalman1D(kalmanQ), new Kalman1D(kalmanQ), new Kalman1D(kalmanQ)];
+  let gestureOrigin: Vector3 = { x: 0, y: 0, z: 0 };
+  let gestureDisplacement: Vector3 = { x: 0, y: 0, z: 0 };
+  // lastCompletedGesture retained for Phase 6/8 gesture-trigger consumers — do not remove.
+  let lastCompletedGesture: Vector3 = { x: 0, y: 0, z: 0 };
+  let lastTs = performance.now();
+
+  // ── Dev-only state (closure-local) ─────────────────────────────────────────
+  let prevMq: Quaternion = { w: 1, x: 0, y: 0, z: 0 };
+  let hzCount = 0;
+  let hzWindowStart = performance.now();
+  let hz = 0;
+
+  // Dev source-select: read URL param once (D-04).
+  if (import.meta.env.DEV) {
+    useMadgwick = new URLSearchParams(location.search).get('orient') === 'madgwick';
+  }
+
+  // Attach touch listeners once per lifetime (idempotent guard inside).
+  attachTouchListeners();
 
   // PRIMARY orientation: OS-fused DeviceOrientationEvent → quaternion (D-03).
   // Do NOT run a second Madgwick pass on this — the OS already fuses gyro + mag.
@@ -738,24 +824,76 @@ function startSensorPipeline(zuptThreshold: number, kalmanQ: number): void {
 
   // Sensor tick: build SensorPacket → encode 36 bytes into reused buffer → broadcast.
   window.addEventListener('devicemotion', function(e: DeviceMotionEvent) {
-    // Build packet — thin slice: OS quaternion only.
-    // Plan 07: replace dx/dy/dz, px/py/pz, driftConfidence, and touch with
-    // ZUPT-gated dead-reckoning from Kalman1D + getGestureDisplacement + currentTouch.
+    // Clamped delta time (V5: stalled/backward clock cannot produce unbounded integration).
+    const now = performance.now();
+    const dtSec = Math.min(0.1, Math.max(0, (now - lastTs) / 1000));
+    lastTs = now;
+
+    // Linear acceleration for Kalman — gravity-removed (V5: safeFloat before predict).
+    const ax = safeFloat(e.acceleration?.x);
+    const ay = safeFloat(e.acceleration?.y);
+    const az = safeFloat(e.acceleration?.z);
+
+    // accelerationIncludingGravity magnitude for ZUPT (V5: safeFloat before update).
+    const ag = e.accelerationIncludingGravity;
+    const mag = Math.hypot(safeFloat(ag?.x), safeFloat(ag?.y), safeFloat(ag?.z));
+
+    // ZUPT stillness detection + Kalman position integration.
+    const isStill = zupt.update(mag, Date.now());
+    const rawPx = kalmans[0].predict(ax, dtSec);
+    const rawPy = kalmans[1].predict(ay, dtSec);
+    const rawPz = kalmans[2].predict(az, dtSec);
+
+    // Bounded positions — T-05-16: drift cannot grow without limit.
+    const clamp = (v: number, lim: number): number => Math.min(lim, Math.max(-lim, v));
+    const pxBounded = clamp(rawPx, POSITION_MAX);
+    const pyBounded = clamp(rawPy, POSITION_MAX);
+    const pzBounded = clamp(rawPz, POSITION_MAX);
+
+    // Live gesture displacement = position delta from last ZUPT origin (bounded).
+    gestureDisplacement = {
+      x: clamp(rawPx - gestureOrigin.x, GESTURE_MAX),
+      y: clamp(rawPy - gestureOrigin.y, GESTURE_MAX),
+      z: clamp(rawPz - gestureOrigin.z, GESTURE_MAX),
+    };
+
+    // ZUPT fired: save completed gesture, reset velocity + origin, zero live displacement.
+    if (isStill) {
+      lastCompletedGesture = { ...gestureDisplacement }; // retained for Phase 6/8
+      kalmans[0].resetVelocity();
+      kalmans[1].resetVelocity();
+      kalmans[2].resetVelocity();
+      gestureOrigin = { x: rawPx, y: rawPy, z: rawPz };
+      gestureDisplacement = { x: 0, y: 0, z: 0 };
+    }
+
+    // Drift confidence: axis-averaged Kalman covariance-derived scalar.
+    const driftConf = (kalmans[0].driftConfidence() + kalmans[1].driftConfidence() + kalmans[2].driftConfidence()) / 3;
+
+    // Dev orientation source-select: default OS-fused; `?orient=madgwick` swaps (D-04).
+    let qSource = primaryQuat;
+    let mq: Quaternion = { w: 1, x: 0, y: 0, z: 0 };
+    if (import.meta.env.DEV) {
+      mq = updateMadgwick(e);
+      rampBeta(quatDelta(mq, prevMq));
+      prevMq = mq;
+      if (useMadgwick) { qSource = mq; }
+    }
+
+    // Build packet — all fields real (no placeholders remain after Plan 07).
     const pkt: SensorPacket = {
       seq: seq++,
       timestamp: Date.now() - sessionStart,
-      qw: primaryQuat.w,
-      qx: primaryQuat.x,
-      qy: primaryQuat.y,
-      qz: primaryQuat.z,
-      // Plan 07: replace with ZUPT/Kalman dead-reckoning position.
-      dx: 0, dy: 0, dz: 0,
-      px: 0, py: 0, pz: 0,
-      driftConfidence: 0,
-      // Plan 07: replace with real touch state (currentTouch).
-      touchActive: false,
-      touchX: 0,
-      touchY: 0,
+      qw: qSource.w,
+      qx: qSource.x,
+      qy: qSource.y,
+      qz: qSource.z,
+      dx: gestureDisplacement.x, dy: gestureDisplacement.y, dz: gestureDisplacement.z,
+      px: pxBounded, py: pyBounded, pz: pzBounded,
+      driftConfidence: driftConf,
+      touchActive: currentTouch.active,
+      touchX: currentTouch.x,
+      touchY: currentTouch.y,
     };
 
     // Encode into module-scope reused buffer — no new ArrayBuffer per tick (Pitfall 5).
@@ -767,11 +905,11 @@ function startSensorPipeline(zuptThreshold: number, kalmanQ: number): void {
     // Motion indicator visual feedback.
     const a = e.acceleration || e.accelerationIncludingGravity;
     if (a) {
-      const mag = Math.sqrt((a.x ?? 0) * (a.x ?? 0) + (a.y ?? 0) * (a.y ?? 0) + (a.z ?? 0) * (a.z ?? 0));
+      const motionMag = Math.sqrt((a.x ?? 0) * (a.x ?? 0) + (a.y ?? 0) * (a.y ?? 0) + (a.z ?? 0) * (a.z ?? 0));
       const indicator = document.getElementById('motion-indicator');
       if (indicator) {
         const threshold = e.acceleration ? 0.5 : 10.3;
-        if (mag > threshold) {
+        if (motionMag > threshold) {
           indicator.classList.add('motion-active');
           if (_motionIndicatorTimer !== null) { clearTimeout(_motionIndicatorTimer); }
           _motionIndicatorTimer = setTimeout(function() {
@@ -781,15 +919,15 @@ function startSensorPipeline(zuptThreshold: number, kalmanQ: number): void {
       }
     }
 
-    // Dev byte/Hz log — at most once per second.
-    _pktCount++;
-    const now = Date.now();
-    const elapsed = now - _lastLogMs;
-    if (elapsed >= 1000) {
-      const hz = (_pktCount / elapsed) * 1000;
-      phoneLog('pkt ' + uint8.byteLength + 'B @' + hz.toFixed(0) + 'Hz');
-      _pktCount  = 0;
-      _lastLogMs = now;
+    // Dev overlay — replaces Plan 06 phoneLog('pkt ...B @...Hz') byte/Hz log (D-15).
+    if (import.meta.env.DEV) {
+      hzCount++;
+      if (now - hzWindowStart >= 1000) {
+        hz = hzCount / ((now - hzWindowStart) / 1000);
+        hzCount = 0;
+        hzWindowStart = now;
+      }
+      updateOverlay(pkt, mq, isStill, hz);
     }
   });
 }

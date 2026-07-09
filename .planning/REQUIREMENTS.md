@@ -38,8 +38,8 @@
 
 - [x] **SENS-01**: Phone runs Madgwick filter on-device to produce a stable orientation quaternion from gyroscope + accelerometer + magnetometer — drift-free
 - [x] **SENS-02**: Madgwick beta parameter is runtime-configurable; defaults to 0.1, ramps to 0.2–0.3 at cold start and ramps back down after convergence
-- [ ] **SENS-03**: Phone runs ZUPT (Zero-Velocity Update) with adaptive variance + 300ms duration threshold — detects stationary moments and resets velocity accumulator to kill drift
-- [ ] **SENS-04**: Phone runs Kalman filter over linear acceleration to produce a dead-reckoning position estimate with a `driftConfidence` scalar (0–1)
+- [x] **SENS-03**: Phone runs ZUPT (Zero-Velocity Update) with adaptive variance + 300ms duration threshold — detects stationary moments and resets velocity accumulator to kill drift
+- [x] **SENS-04**: Phone runs Kalman filter over linear acceleration to produce a dead-reckoning position estimate with a `driftConfidence` scalar (0–1)
 - [ ] **SENS-05**: Gesture displacement: ZUPT gates a per-action position delta window — each swing/throw/flick produces a discrete `gestureDisplacement` vector reset between actions
 - [ ] **SENS-06**: Touch input: phone captures tap events and configurable on-screen button states, included in each sensor packet
 
@@ -130,8 +130,8 @@
 | PHONE-07 | Phase 4 | Pending |
 | SENS-01 | Phase 5 | Complete |
 | SENS-02 | Phase 5 | Complete |
-| SENS-03 | Phase 5 | Pending |
-| SENS-04 | Phase 5 | Pending |
+| SENS-03 | Phase 5 | Complete |
+| SENS-04 | Phase 5 | Complete |
 | SENS-05 | Phase 5 | Pending |
 | SENS-06 | Phase 5 | Pending |
 | PHONE-04 | Phase 5 | Complete |
