@@ -578,13 +578,12 @@ function openChannelToPeer(peerId) {
     phoneLog('conn=' + pc.connectionState + ' p=' + ptag);
     console.info('[WebRTC] connectionState=' + pc.connectionState + ' peer=' + ptag);
     if (pc.connectionState === 'failed') {
-      // Mark channel as lost.
-      if (channelIsOpen) {
-        channelIsOpen = false;
+      var entry = peerConnections.get(peerId);
+      if (entry && entry.channelOpen) {
+        entry.channelOpen = false;
         if (openChannelCount > 0) { openChannelCount--; }
         updateConnectingUI();
       }
-      // Reopen immediately if transport is up — don't wait for next WT reconnect cycle.
       if (registered) {
         peerConnections.delete(peerId);
         try { pc.close(); } catch (e) {}
@@ -600,7 +599,6 @@ function openChannelToPeer(peerId) {
     phoneLog('gather=' + pc.iceGatheringState + ' p=' + ptag);
   };
 
-  var channelIsOpen = false;  // WR-01
   var intentionalClose = false;  // WR-11
 
   pc.onnegotiationneeded = function() {
@@ -626,7 +624,8 @@ function openChannelToPeer(peerId) {
   };
 
   dc.onopen = function() {
-    channelIsOpen = true;  // WR-01
+    var entry = peerConnections.get(peerId);
+    if (entry) { entry.channelOpen = true; }
     phoneLog('DC-OPEN p=' + ptag);
     openChannelCount++;
     updateConnectingUI();
@@ -636,15 +635,16 @@ function openChannelToPeer(peerId) {
 
   dc.onclose = function() {
     if (intentionalClose) { return; }  // WR-11
-    if (channelIsOpen) {
-      channelIsOpen = false;
+    var entry = peerConnections.get(peerId);
+    if (entry && entry.channelOpen) {
+      entry.channelOpen = false;
       if (openChannelCount > 0) { openChannelCount--; }
       updateConnectingUI();
     }
     sendPhoneState({ state: 'channel-lost', with: peerId });
   };
 
-  peerConnections.set(peerId, { pc: pc, dc: dc, flagClose: function() { intentionalClose = true; } });
+  peerConnections.set(peerId, { pc: pc, dc: dc, channelOpen: false, flagClose: function() { intentionalClose = true; } });
 }
 
 function updateConnectingUI() {
@@ -748,6 +748,7 @@ async function requestWakeLock() {
 }
 
 function startHeartbeat() {
+  clearInterval(heartbeatInterval);
   heartbeatInterval = setInterval(function() {
     signalSend('heartbeat', '', {});
   }, 5000);
@@ -783,7 +784,7 @@ function closePeer(peerId) {
   if (entry.flagClose) { entry.flagClose(); }
   try { entry.pc.close(); } catch (e) { /* already closed */ }
   peerConnections.delete(peerId);
-  if (openChannelCount > 0) { openChannelCount--; }
+  if (entry.channelOpen && openChannelCount > 0) { openChannelCount--; }
   updateConnectingUI();
 }
 
@@ -793,7 +794,7 @@ document.addEventListener('visibilitychange', function() {
       // Signaling dropped while backgrounded (WT killed by iOS). attemptReconnect
       // is triggered by transport.closed, but the two events can race. If registered
       // is still false here and reconnectToken is set, kick reconnect explicitly.
-      if (reconnectToken && !ws) { attemptReconnect(); }
+      if (reconnectToken && !ws && !_reconnecting) { attemptReconnect(); }
       return;
     }
     sendPhoneState({ state: 'foreground' });

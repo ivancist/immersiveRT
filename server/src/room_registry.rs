@@ -80,8 +80,8 @@ pub struct RoomRegistry {
     /// Per-slot hold timers. Keyed by (room_code, slot_id).
     /// `remove()` yields owned handle; `handle.abort()` is synchronous — no lock held.
     hold_timers: Arc<DashMap<(RoomCode, SlotId), JoinHandle<()>>>,
-    /// Server-side lookup: reconnect_token → (room_code, slot_id).
-    reconnect_tokens: Arc<DashMap<String, (RoomCode, SlotId)>>,
+    /// Server-side lookup: reconnect_token → (room_code, slot_id, is_phone).
+    reconnect_tokens: Arc<DashMap<String, (RoomCode, SlotId, bool)>>,
     pairing_store: Arc<PairingTokenStore>,
     pairing_secret: String,
     /// HMAC secret for coturn's use-auth-secret REST API (INFRA-04).
@@ -351,7 +351,7 @@ impl RoomRegistry {
 
         // Store reconnect token server-side (T-03-05 mitigation).
         self.reconnect_tokens
-            .insert(reconnect_token.clone(), (actual_room_code.clone(), slot_id));
+            .insert(reconnect_token.clone(), (actual_room_code.clone(), slot_id, false));
 
         // Build pairing URL (D-13).
         let pairing_url = format!("{}/phone?token={}", self.base_url, pairing_token);
@@ -445,8 +445,8 @@ impl RoomRegistry {
             }
         };
 
-        // Look up (room_code, slot_id) from server-side table.
-        let (room_code, slot_id) = match self.reconnect_tokens.get(&reconnect_token) {
+        // Look up (room_code, slot_id, is_phone) from server-side table.
+        let (room_code, slot_id, is_phone) = match self.reconnect_tokens.get(&reconnect_token) {
             Some(entry) => entry.value().clone(),
             None => {
                 return serde_json::json!({
@@ -491,8 +491,11 @@ impl RoomRegistry {
                         "payload": {"reason": "slot_not_held"}
                     });
                 }
-                info.client_id = client_id.to_string();
-                info.phone_client_id = Some(client_id.to_string());
+                if is_phone {
+                    info.phone_client_id = Some(client_id.to_string());
+                } else {
+                    info.client_id = client_id.to_string();
+                }
                 info.status = SlotStatus::Connected;
                 // Reset heartbeat clock so the monitor doesn't immediately re-fire
                 // (elapsed was already > 65s from the disconnect period).
@@ -501,18 +504,19 @@ impl RoomRegistry {
         }
         // DashMap RefMut dropped here.
 
-        // Clear player_ready_sent and channel_ready for this phone so WebRTC can
-        // re-handshake if channels closed during the transport gap. Safe to call
-        // even if channels are still open — new rtc-channel-ready messages will
-        // arrive only if the DC actually needs reopening.
-        self.player_ready_sent.remove(&(room_code.clone(), client_id.to_string()));
-        self.channel_ready.retain(|k, _| !(k.0 == room_code && k.1 == client_id));
+        // Clear player_ready_sent and channel_ready so WebRTC can re-handshake if
+        // channels closed during the transport gap (phone reconnects only — these maps
+        // are keyed by phone_client_id).
+        if is_phone {
+            self.player_ready_sent.remove(&(room_code.clone(), client_id.to_string()));
+            self.channel_ready.retain(|k, _| !(k.0 == room_code && k.1 == client_id));
+        }
 
         // Generate fresh reconnect_token and pairing_url (D-17).
         let new_reconnect_token = generate_reconnect_token();
         self.reconnect_tokens.remove(&reconnect_token);
         self.reconnect_tokens
-            .insert(new_reconnect_token.clone(), (room_code.clone(), slot_id));
+            .insert(new_reconnect_token.clone(), (room_code.clone(), slot_id, is_phone));
 
         // Also update stored reconnect token in slot info.
         if let Some(mut room_ref) = self.rooms.get_mut(&room_code) {
@@ -669,8 +673,8 @@ impl RoomRegistry {
         }
         // DashMap RefMut dropped here.
 
-        // Step 2: Collect desktop_id, reconnect_token, and peers list (collect-then-drop).
-        let (desktop_client_id, reconnect_token_val, peers_list) = {
+        // Step 2: Collect desktop_id and peers list (collect-then-drop).
+        let (desktop_client_id, peers_list) = {
             if let Some(room_ref) = self.rooms.get(&room_code) {
                 let desktop_slot = room_ref.slots
                     .get((slot_id - 1) as usize)
@@ -685,9 +689,6 @@ impl RoomRegistry {
                         });
                     }
                 };
-                let reconnect_tok = desktop_slot
-                    .map(|s| s.reconnect_token.clone())
-                    .unwrap_or_default();
 
                 // Build peers list from all Connected desktop slots (never the phone — Pitfall 7).
                 let peers: Vec<serde_json::Value> = room_ref.slots.iter()
@@ -707,7 +708,7 @@ impl RoomRegistry {
                     })
                     .collect();
 
-                (desktop_id, reconnect_tok, peers)
+                (desktop_id, peers)
             } else {
                 return serde_json::json!({
                     "type": "pair-error",
@@ -716,6 +717,10 @@ impl RoomRegistry {
             }
         };
         // DashMap Ref dropped here.
+
+        // Generate a phone-specific reconnect token (separate from the desktop's).
+        let phone_reconnect_token = generate_reconnect_token();
+        self.reconnect_tokens.insert(phone_reconnect_token.clone(), (room_code.clone(), slot_id, true));
 
         // Step 3: Generate ephemeral TURN credentials for the phone.
         // WR-05: use turn_credential_ttl_secs (default 3600 s) rather than
@@ -770,7 +775,7 @@ impl RoomRegistry {
                 "desktop_id": desktop_client_id,
                 "slot": slot_id,
                 "room_code": room_code,
-                "reconnect_token": reconnect_token_val,
+                "reconnect_token": phone_reconnect_token,
                 "pairing_url": pairing_url,
                 "peers": peers_list,
                 "ice_servers": ice_servers
@@ -872,8 +877,8 @@ impl RoomRegistry {
             // release_slot_if_disconnected returns Some(username) only when the
             // slot was genuinely still Disconnected — reconnect sets it to Connected.
             if let Some(evicted_username) = registry.release_slot_if_disconnected(&code_clone, slot_id) {
-                // Remove the stale reconnect token.
-                registry.reconnect_tokens.retain(|_, v| v != &(code_clone.clone(), slot_id));
+                // Remove the stale reconnect token(s) for this slot.
+                registry.reconnect_tokens.retain(|_, v| !(v.0 == code_clone && v.1 == slot_id));
 
                 // Broadcast player-left (D-19).
                 let left_event = serde_json::to_vec(&serde_json::json!({
@@ -934,8 +939,8 @@ impl RoomRegistry {
             handle.abort();
         }
 
-        // Remove reconnect token — slot is gone, token is invalid.
-        self.reconnect_tokens.retain(|_, v| v != &(room_code.clone(), slot_id));
+        // Remove reconnect token(s) — slot is gone, tokens are invalid.
+        self.reconnect_tokens.retain(|_, v| !(v.0 == room_code && v.1 == slot_id));
 
         let event = serde_json::to_vec(&serde_json::json!({
             "type": "room-event",
@@ -990,14 +995,14 @@ impl RoomRegistry {
     /// Collects the phone_client_id while holding the DashMap Ref, drops the Ref,
     /// then calls broker.route — never holds a Ref across the broker call (Pitfall 3).
     fn route_to_phone(&self, room_code: &str, event_bytes: Vec<u8>, broker: &SignalingBroker) {
-        let phone_id: Option<String> = self.rooms.get(room_code).and_then(|room| {
-            room.slots.iter().find_map(|s| {
-                s.as_ref().and_then(|info| info.phone_client_id.clone())
-            })
-        });
+        let phone_ids: Vec<String> = self.rooms.get(room_code)
+            .map(|room| room.slots.iter()
+                .filter_map(|s| s.as_ref()?.phone_client_id.clone())
+                .collect())
+            .unwrap_or_default();
         // DashMap Ref dropped here.
-        if let Some(id) = phone_id {
-            if !broker.route(&id, event_bytes) {
+        for id in phone_ids {
+            if !broker.route(&id, event_bytes.clone()) {
                 tracing::warn!(phone_id = %id, "route_to_phone: phone not connected");
             }
         }
@@ -1371,7 +1376,7 @@ impl RoomRegistry {
             {
                 registry
                     .reconnect_tokens
-                    .retain(|_, v| v != &(code_clone.clone(), slot_id));
+                    .retain(|_, v| !(v.0 == code_clone && v.1 == slot_id));
                 let left_event = serde_json::to_vec(&serde_json::json!({
                     "type": "room-event",
                     "payload": {

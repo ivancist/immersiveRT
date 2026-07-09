@@ -17,6 +17,7 @@ let pendingUsername = null;   // username sent with join-room, used in handleJoi
 
 // WebRTC state — desktop side (Phase 4 Plan 02: minimal answerer for PHONE-03)
 var desktopPeers = new Map(); // phoneId → RTCPeerConnection
+var pendingICE = new Map();   // phoneId → ICE candidate[] queued before setRemoteDescription resolves
 
 // Diagnostic: set true to force TURN-relay-only ICE (bypasses direct LAN path).
 // Useful to isolate whether DTLS failure is specific to the direct host-to-host path.
@@ -224,6 +225,14 @@ function onServerMessage(msg) {
 function handleOffer(msg) {
   var phoneId = msg.from;
   var tag = phoneId.slice(0, 8);
+
+  // Close zombie PC from a previous offer by the same phone.
+  var oldPc = desktopPeers.get(phoneId);
+  if (oldPc) {
+    try { oldPc.close(); } catch (e) {}
+    desktopPeers.delete(phoneId);
+  }
+
   var iceConfig = {
     iceServers: (currentRoom && currentRoom.iceServers) || [{ urls: 'stun:' + location.hostname + ':3478' }]
   };
@@ -253,10 +262,21 @@ function handleOffer(msg) {
     sendTo('ice-candidate', phoneId, evt.candidate);
   };
 
-  desktopPeers.set(phoneId, pc);
+  // Initialise ICE queue BEFORE the async chain so candidates arriving during
+  // setRemoteDescription are buffered rather than dropped.
+  pendingICE.set(phoneId, []);
 
   pc.setRemoteDescription(msg.payload)
     .then(function() {
+      // Only now is addIceCandidate safe — commit pc and drain the queue.
+      desktopPeers.set(phoneId, pc);
+      var queued = pendingICE.get(phoneId) || [];
+      pendingICE.delete(phoneId);
+      queued.forEach(function(c) {
+        pc.addIceCandidate(c).catch(function(e) {
+          console.warn('[WebRTC] queued addIceCandidate failed:', e);
+        });
+      });
       var offerSetup = (msg.payload && msg.payload.sdp || '').match(/a=setup:(\S+)/);
       console.info('[WebRTC] offer a=setup:' + (offerSetup ? offerSetup[1] : 'not found') + ' phone=' + tag);
       return pc.createAnswer();
@@ -276,15 +296,21 @@ function handleOffer(msg) {
     .catch(function(err) {
       console.warn('[WebRTC] handleOffer failed for phone', phoneId, ':', err);
       desktopPeers.delete(phoneId);
+      pendingICE.delete(phoneId);
     });
 }
 
 function handleIceCandidate(msg) {
   var pc = desktopPeers.get(msg.from);
-  if (!pc) { return; }
-  pc.addIceCandidate(msg.payload).catch(function(err) {
-    console.warn('[WebRTC] addIceCandidate failed:', err);
-  });
+  if (pc) {
+    pc.addIceCandidate(msg.payload).catch(function(err) {
+      console.warn('[WebRTC] addIceCandidate failed:', err);
+    });
+    return;
+  }
+  // setRemoteDescription not yet resolved — buffer the candidate.
+  var queue = pendingICE.get(msg.from);
+  if (queue) { queue.push(msg.payload); }
 }
 
 function handlePlayerReady(msg) {
