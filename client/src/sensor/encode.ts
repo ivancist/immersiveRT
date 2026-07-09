@@ -143,15 +143,15 @@ export function encodePacket(
 export function computeCalibration(
   samples: number[],
 ): { threshold: number; kalmanQ: number } {
-  if (samples.length === 0) return { threshold: 0, kalmanQ: 0 };
+  if (samples.length === 0) return { threshold: 0.01, kalmanQ: 0.001 };
 
   const n = samples.length;
   const mean = samples.reduce((sum, v) => sum + v, 0) / n;
   const variance = samples.reduce((sum, v) => sum + (v - mean) ** 2, 0) / n;
 
   return {
-    threshold: variance * 2,
-    kalmanQ: variance * 0.1,
+    threshold: Math.max(variance * 2, 0.001),
+    kalmanQ:   Math.max(variance * 0.1, 0.0001),
   };
 }
 
@@ -176,7 +176,10 @@ export function runCalibration(
   const samples: number[] = [];
 
   const handler = (e: DeviceMotionEvent): void => {
-    const ag = e.acceleration;
+    // Use accelerationIncludingGravity to match the ZUPT runtime path in phone.ts.
+    // e.acceleration (gravity-subtracted) is null on gyro-less Android devices,
+    // which would silently drop all calibration samples and produce threshold=0.
+    const ag = e.accelerationIncludingGravity;
     if (ag) {
       const mag = Math.hypot(
         safeFloat(ag.x),
