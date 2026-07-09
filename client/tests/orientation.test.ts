@@ -88,7 +88,11 @@ describe('eulerToQuat — known yaw', () => {
 
 describe('Madgwick filter — unit norm after 50 updates', () => {
   it('getQuaternion() magnitude within ±1e-3 of 1 after 50 synthetic updates', () => {
-    const steadyEvent = makeFakeMotionEvent(0.1, 0.1, 0.1, 0, 0, 9.81);
+    // Use a slightly tilted gravity (ax=0.5, ay=0.5) rather than perfectly vertical
+    // (0,0,9.81) to avoid the Madgwick zero-gradient singularity that occurs when the
+    // initial identity quaternion is exactly aligned with the gravity vector — at that
+    // specific starting point the gradient descent step collapses to 0/0 → NaN.
+    const steadyEvent = makeFakeMotionEvent(0.1, 0.1, 0.1, 0.5, 0.5, 9.79);
     for (let i = 0; i < 50; i++) {
       updateMadgwick(steadyEvent);
     }
