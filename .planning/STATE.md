@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: sensor-fusion-and-packet-encoding
 status: executing
-stopped_at: Completed 05-05-PLAN.md
-last_updated: "2026-07-09T13:03:54.487Z"
+stopped_at: Completed 05-06-PLAN.md
+last_updated: "2026-07-09T13:17:06.567Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 8
   completed_phases: 4
   total_plans: 22
-  completed_plans: 20
-  percent: 91
+  completed_plans: 21
+  percent: 50
 ---
 
 # Project State
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 05 (sensor-fusion-and-packet-encoding) — EXECUTING
-Plan: 6 of 7
+Plan: 7 of 7
 Status: Ready to execute
 Last activity: 2026-07-09 — Phase 05 execution started
 
@@ -76,6 +76,7 @@ Progress: [█████████░] 91%
 | Phase 05 P03 | 2 | 2 tasks | 4 files |
 | Phase 05 P04 | 6 | 2 tasks | 2 files |
 | Phase 05 P05 | 3 | 4 tasks | 4 files |
+| Phase 05 P06 | 8 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -120,6 +121,8 @@ Recent decisions affecting current work:
 - Phase 5 Plan 05: ZUPTDetector NaN guard skips push but still evicts stale entries — bounded window preserved on bad samples (T-05-01)
 - Phase 5 Plan 05: Kalman1D resetVelocity uses Kalman gain K=P/(P+R) to shrink P proportionally — not a hard reset to zero
 - Phase 5 Plan 05: driftConfidence=max(0,1-min(1,P)) naturally in [0,1] without explicit clamping branches
+- [Phase ?]: Phase 5 Plan 06: cast encodePacket return to Uint8Array<ArrayBuffer> for RTCDataChannel.send TS 5.6+ compatibility
+- [Phase ?]: Phase 5 Plan 06: requestWakeLock + startHeartbeat moved to runCalibration callback — fire when active view shows, not before calibration
 
 ### Pending Todos
 
@@ -146,6 +149,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-09T13:04:00Z
-Stopped at: Completed 05-05-PLAN.md
+Last session: 2026-07-09T13:17:06.562Z
+Stopped at: Completed 05-06-PLAN.md
 Resume file: None
