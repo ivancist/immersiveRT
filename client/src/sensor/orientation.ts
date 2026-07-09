@@ -25,6 +25,7 @@
  */
 
 import AHRS from 'ahrs';
+import { safeFloat } from './encode';
 import type { Quaternion } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -46,20 +47,6 @@ const BETA_FLOOR = 0.1;
 
 /** Step size for each rampBeta call that is below the convergence threshold. */
 const BETA_STEP = 0.005;
-
-// ---------------------------------------------------------------------------
-// Input sanitisation (V5 / T-05-01)
-// ---------------------------------------------------------------------------
-
-/**
- * Returns `fallback` (default 0) when `v` is null, undefined, NaN, or ±Infinity.
- * Applied to every float argument before ahrs.update() so a poisoned sensor
- * reading cannot corrupt the filter state for the rest of the session.
- */
-function safeFloat(v: number | null | undefined, fallback = 0): number {
-  if (v == null || !isFinite(v as number)) return fallback;
-  return v as number;
-}
 
 // ---------------------------------------------------------------------------
 // PRIMARY orientation source: OS-fused eulerToQuat (D-03 / RESEARCH Pattern 2)
