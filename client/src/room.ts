@@ -4,6 +4,9 @@
  * All DOM access via vanilla browser APIs only.
  */
 
+// Marks this file as an ES module (prevents global-scope collision with phone.ts).
+export {};
+
 // Ambient declaration for the QRCode CDN global (qrcode@1.4.4 via jsdelivr).
 // Only the shape that room.ts actually calls is typed here.
 declare const QRCode: {
