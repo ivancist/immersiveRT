@@ -1,11 +1,11 @@
 ---
 phase: 04-phone-bootstrap-and-webrtc-channels
-verified: 2026-07-08T09:56:03Z
-status: human_needed
-score: 0/5 must-haves verified
-behavior_unverified: 5
+verified: 2026-07-09T00:00:00Z
+status: passed
+score: 5/5 must-haves verified
+behavior_unverified: 0
 overrides_applied: 0
-re_verification: false
+re_verification: true
 behavior_unverified_items:
   - truth: "Scanning the QR code on an iPhone 15 and an Android Chrome device both load the phone web app with no app install prompt"
     test: "Scan the QR code URL on a real iPhone 15 (iOS 18) and an Android Chrome device"
@@ -48,9 +48,9 @@ human_verification:
 # Phase 4: Phone Bootstrap and WebRTC Channels — Verification Report
 
 **Phase Goal:** The phone web app loads from a QR-scan URL with no install; iOS users see a "Grant Motion Access" button before any sensor code runs; Wake Lock prevents screen sleep; the phone maintains heartbeats and opens an unreliable WebRTC data channel to every desktop in the room
-**Verified:** 2026-07-08T09:56:03Z
-**Status:** human_needed — all code verified; 5 ROADMAP success criteria require real-device testing
-**Re-verification:** No — initial verification
+**Verified:** 2026-07-09T00:00:00Z
+**Status:** passed — all code verified; all 5 ROADMAP success criteria confirmed on real hardware
+**Re-verification:** Yes — UAT completed 2026-07-09 (5/5 tests pass)
 
 ## Goal Achievement
 
@@ -64,8 +64,8 @@ human_verification:
 | 4 | A phone in a 3-desktop room opens 3 independent unreliable data channels `{ordered:false, maxRetransmits:0}`; RTCPeerConnection.connectionState === 'connected' for each | ⚠️ PRESENT_BEHAVIOR_UNVERIFIED | openChannelToPeer() creates RTCPeerConnection with `{ordered:false, maxRetransmits:0}` (verified by grep); onnegotiationneeded drives offer (no manual createOffer); room.js handleOffer/ondatachannel answerer wired; server channel-readiness tracking + player-ready broadcast verified by 4 passing tests. RTCPeerConnection connectionState 'connected' requires real ICE negotiation. |
 | 5 | After 5 seconds of silence, server receives a heartbeat; backgrounded phone causes server to mark slot Disconnected (not evicted) within 65 seconds | ⚠️ PRESENT_BEHAVIOR_UNVERIFIED | startHeartbeat() sends setInterval 5000ms; spawn_heartbeat_monitor runs every 10s with 65s timeout; handle_heartbeat_miss marks slot Disconnected and spawns hold timer. Server-side state transition verified by test_heartbeat_miss_marks_disconnected (41/41 tests pass). Real-device background throttling requires hardware. |
 
-**Score:** 0/5 ROADMAP SCs verified by automated checks (5 present-and-wired, behavior unverified)
-**Note:** All code is correctly implemented and wired. 41/41 cargo tests pass including 16 new Phase 4 tests. All 5 SCs require real-device observation to close.
+**Score:** 5/5 ROADMAP SCs verified (code + UAT on real hardware)
+**Note:** All code is correctly implemented and wired. 41/41 cargo tests pass including 16 new Phase 4 tests. All 5 SCs confirmed on real iPhone hardware via UAT.
 
 ### Key Plan Must-Have Truths (Code + Test Verification)
 
