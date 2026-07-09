@@ -23,12 +23,13 @@ describe('ZUPTDetector — partial window (<5 samples)', () => {
 
   it('returns false with 4 low-variance samples', () => {
     const det = new ZUPTDetector();
-    // Push 4 identical still samples spanning 4×60ms = 240ms
+    // Push 4 identical still samples at t=0,60,120,180 — window never reaches 5
+    let result = false;
     for (let i = 0; i < 4; i++) {
-      det.update(9.81, i * 60);
+      result = det.update(9.81, i * 60);
     }
-    // update() for the 4th sample still returns false (window.length === 4)
-    expect(det.update(9.81, 3 * 60)).toBe(false);
+    // update() for the 4th sample returns false (window.length === 4 < 5)
+    expect(result).toBe(false);
   });
 });
 
