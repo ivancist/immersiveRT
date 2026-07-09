@@ -49,7 +49,7 @@ interface SignalingMessage {
 
 // ── View helper ──────────────────────────────────────────────────────────────
 function showView(id: string): void {
-  ['view-permission', 'view-connecting', 'view-active',
+  ['view-permission', 'view-connecting', 'view-calibrating', 'view-active',
    'view-ended', 'view-error-denied', 'view-error-pair'].forEach(function(v) {
     const el = document.getElementById(v);
     if (el) { el.hidden = true; }

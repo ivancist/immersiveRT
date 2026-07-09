@@ -188,6 +188,24 @@
       align-items: center;
       gap: 6px;
     }
+
+    /* ──────────────────────────────────────────
+       Calibration countdown bar (D-08)
+    ────────────────────────────────────────── */
+    #calibration-bar {
+      width: 100%;
+      height: 6px;
+      background: var(--color-status-empty);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    #calibration-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--color-accent);
+      border-radius: 3px;
+      transition: width 3s linear;
+    }
   </style>
 </head>
 <body>
@@ -210,6 +228,15 @@
       <p class="size-body mt-md">
         Connecting&hellip; <strong><span id="chan-open">0</span></strong>/<strong><span id="chan-total">0</span></strong> channels
       </p>
+    </div>
+
+    <!-- ── View: Calibrating (hidden) ── -->
+    <div id="view-calibrating" hidden>
+      <p class="size-heading">Hold your phone still</p>
+      <p class="size-body text-secondary mt-md">Place it flat on a surface.</p>
+      <div id="calibration-bar" class="mt-lg">
+        <div id="calibration-fill"></div>
+      </div>
     </div>
 
     <!-- ── View 3: Active / Ready (hidden) ── -->
