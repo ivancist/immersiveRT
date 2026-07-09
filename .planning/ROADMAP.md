@@ -149,7 +149,6 @@ Plans:
 ### Phase 5: Sensor Fusion and Packet Encoding
 
 **Goal**: The phone runs a full on-device sensor pipeline — Madgwick quaternion fusion, adaptive ZUPT dead-reckoning reset, Kalman position estimate — and encodes every output at the maximum device sample rate into a 36-byte binary DataView packet (schema v1) transmitted over the unreliable data channel
-**Mode:** mvp
 **Depends on**: Phase 4
 **Requirements**: SENS-01, SENS-02, SENS-03, SENS-04, SENS-05, SENS-06, PHONE-04, PHONE-05
 **Success Criteria** (what must be TRUE):
