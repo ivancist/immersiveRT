@@ -238,7 +238,11 @@ function onServerMessage(msg: Record<string, unknown>): void {
 // Full receive pipeline, target-state store, and TURN path are Phase 6 (DESK-02).
 // ──────────────────────────────────────────────────────────────────────────────
 function handleOffer(msg: Record<string, unknown>): void {
-  const phoneId = msg.from as string;
+  const phoneId = typeof msg.from === 'string' ? msg.from : '';
+  if (!phoneId) {
+    console.warn('[WebRTC] handleOffer: missing or invalid from field', msg);
+    return;
+  }
   const tag = phoneId.slice(0, 8);
 
   // Close zombie PC from a previous offer by the same phone.
@@ -319,7 +323,11 @@ function handleOffer(msg: Record<string, unknown>): void {
 }
 
 function handleIceCandidate(msg: Record<string, unknown>): void {
-  const from = msg.from as string;
+  const from = typeof msg.from === 'string' ? msg.from : '';
+  if (!from) {
+    console.warn('[WebRTC] handleIceCandidate: missing or invalid from field', msg);
+    return;
+  }
   const pc = desktopPeers.get(from);
   if (pc) {
     pc.addIceCandidate(msg.payload as RTCIceCandidateInit).catch(function (err: unknown) {
@@ -638,9 +646,10 @@ function renderQR(pairingUrl: string): void {
   if (typeof QRCode === 'undefined') {
     // CDN not loaded — show text fallback
     if (canvas.parentElement) {
-      canvas.parentElement.innerHTML =
-        '<p style="color:#000;font-family:monospace;font-size:12px;word-break:break-all;padding:8px">Open: ' +
-        pairingUrl + '</p>';
+      const p = document.createElement('p');
+      p.style.cssText = 'color:#000;font-family:monospace;font-size:12px;word-break:break-all;padding:8px';
+      p.textContent = 'Open: ' + pairingUrl;
+      canvas.parentElement.replaceChildren(p);
     }
     return;
   }
@@ -659,9 +668,10 @@ function renderQR(pairingUrl: string): void {
       if (err) {
         // Fallback per UI-SPEC §QR Code Fallback
         if (canvas.parentElement) {
-          canvas.parentElement.innerHTML =
-            '<p style="color:#000;font-family:monospace;font-size:12px;word-break:break-all;padding:8px">Open: ' +
-            pairingUrl + '</p>';
+          const p = document.createElement('p');
+          p.style.cssText = 'color:#000;font-family:monospace;font-size:12px;word-break:break-all;padding:8px';
+          p.textContent = 'Open: ' + pairingUrl;
+          canvas.parentElement.replaceChildren(p);
         }
       }
     }
@@ -806,7 +816,8 @@ function appendEventLog(event: string, slot: number, username: string): void {
 
   // Max 50 entries — remove oldest when limit reached
   if (log.children.length >= 50) {
-    log.removeChild(log.firstChild!);
+    const oldest = log.firstElementChild;
+    if (oldest) { log.removeChild(oldest); }
   }
 
   log.appendChild(entry);
