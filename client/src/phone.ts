@@ -566,16 +566,16 @@ async function attemptReconnect(): Promise<void> {
       showReconnected();
       phoneLog('reconnect-ok slot=' + mySlot + ' n=' + attempt + ' via=' + (useWt ? 'WT' : 'WS'));
 
-      const toReopen: string[] = [];
+      const toReopen: Array<[string, boolean]> = [];
       peerConnections.forEach(function(entry, peerId) {
         if (entry.dc.readyState === 'closed' || entry.dc.readyState === 'closing' ||
             entry.pc.connectionState === 'failed') {
-          toReopen.push(peerId);
+          toReopen.push([peerId, entry.channelOpen]);
         }
       });
-      toReopen.forEach(function(peerId) {
+      toReopen.forEach(function([peerId, wasOpen]) {
         peerConnections.delete(peerId);
-        openChannelToPeer(peerId);
+        openChannelToPeer(peerId, wasOpen);
       });
 
       startHeartbeat();
@@ -606,12 +606,7 @@ async function attemptReconnect(): Promise<void> {
 }
 
 // ── WebRTC fan-out ───────────────────────────────────────────────────────────
-function openChannelToPeer(peerId: string): void {
-  // CR-03: Detect reconnect BEFORE peerConnections.set overwrites the entry.
-  const prev = peerConnections.get(peerId);
-  const isRecovery = prev && prev.dc &&
-    (prev.dc.readyState === 'closed' || prev.dc.readyState === 'closing');
-
+function openChannelToPeer(peerId: string, isRecovery = false): void {
   const ptag = peerId.slice(0, 8);
   phoneLog('openCh p=' + ptag + ' ice=' + iceServers.length);
   const pc = new RTCPeerConnection({ iceServers: iceServers });
@@ -623,6 +618,7 @@ function openChannelToPeer(peerId: string): void {
     console.info('[WebRTC] connectionState=' + pc.connectionState + ' peer=' + ptag);
     if (pc.connectionState === 'failed') {
       const entry = peerConnections.get(peerId);
+      const wasOpen = entry ? entry.channelOpen : false;
       if (entry && entry.channelOpen) {
         entry.channelOpen = false;
         if (openChannelCount > 0) { openChannelCount--; }
@@ -631,7 +627,7 @@ function openChannelToPeer(peerId: string): void {
       if (registered) {
         peerConnections.delete(peerId);
         try { pc.close(); } catch (e) { /* ignore */ }
-        openChannelToPeer(peerId);
+        openChannelToPeer(peerId, wasOpen);
       }
     }
   };
@@ -1058,25 +1054,6 @@ function sendPhoneState(statePayload: object): void {
 }
 
 let _motionIndicatorTimer: ReturnType<typeof setTimeout> | null = null;
-function startMotionIndicator(): void {
-  window.addEventListener('devicemotion', function(e: DeviceMotionEvent) {
-    // e.acceleration = linear acceleration (without gravity) — standard DOM spec name.
-    // Fall back to accelerationIncludingGravity when acceleration is unavailable.
-    const a = e.acceleration || e.accelerationIncludingGravity;
-    if (!a) { return; }
-    const mag = Math.sqrt((a.x ?? 0) * (a.x ?? 0) + (a.y ?? 0) * (a.y ?? 0) + (a.z ?? 0) * (a.z ?? 0));
-    const indicator = document.getElementById('motion-indicator');
-    if (!indicator) { return; }
-    const threshold = e.acceleration ? 0.5 : 10.3;
-    if (mag > threshold) {
-      indicator.classList.add('motion-active');
-      if (_motionIndicatorTimer !== null) { clearTimeout(_motionIndicatorTimer); }
-      _motionIndicatorTimer = setTimeout(function() {
-        indicator.classList.remove('motion-active');
-      }, 300);
-    }
-  });
-}
 
 function closePeer(peerId: string): void {
   const entry = peerConnections.get(peerId);
@@ -1103,8 +1080,9 @@ document.addEventListener('visibilitychange', function() {
     peerConnections.forEach(function(entry, peerId) {
       if (entry.dc.readyState === 'closed' || entry.dc.readyState === 'closing' ||
           entry.pc.connectionState === 'failed') {
+        const wasOpen = entry.channelOpen;
         peerConnections.delete(peerId);
-        openChannelToPeer(peerId);
+        openChannelToPeer(peerId, wasOpen);
       }
     });
   } else {
