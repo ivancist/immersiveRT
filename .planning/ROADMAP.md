@@ -183,8 +183,26 @@ Plans:
   4. A Three.js cube rotates smoothly following phone orientation with no visible jitter — the render loop reads from the target-state store and applies SLERP at the configured alpha (default 0.3)
   5. Two phones in the same room each drive a distinct Three.js object — both objects move simultaneously and independently on the same desktop
 
-**Plans**: TBD
+**Plans**: 5 plans
 **UI hint**: yes
+
+Plans:
+**Wave 1** *(parallel)*
+
+- [ ] 06-01-PLAN.md — WebTransport migration in room.ts (WT-first dual-path, WS fallback) (DESK-01)
+- [ ] 06-02-PLAN.md — decode.ts + playerStore.ts: binary decode, uint16 seq-drop, finite-guard, per-player target-state store, test-first (DESK-03, DESK-04)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 06-03-PLAN.md — Three.js install (legitimacy gate) + game DOM/CSS shell + empty scene activates on first player-ready (DESK-05)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 06-04-PLAN.md — Per-player boxes + SLERP + receive wiring → phone motion rotates its cube; two phones two cubes (DESK-02, DESK-05)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 06-05-PLAN.md — Precision-eval instrumentation: keyboard toggles, persistent HUD, TAB roster, numeric HUD, touch flash, motion trail (DESK-05)
 
 ### Phase 7: SDK Public API
 
@@ -231,6 +249,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 3. Session and Pairing | 4/4 | Complete    | 2026-07-07 |
 | 4. Phone Bootstrap and WebRTC Channels | 1/3 | In Progress|  |
 | 5. Sensor Fusion and Packet Encoding | 7/7 | Complete   | 2026-07-09 |
-| 6. Desktop Receive, Decode, and Rendering | 0/TBD | Not started | - |
+| 6. Desktop Receive, Decode, and Rendering | 0/5 | Planned | - |
 | 7. SDK Public API | 0/TBD | Not started | - |
 | 8. Demo Game | 0/TBD | Not started | - |
