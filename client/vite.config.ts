@@ -9,6 +9,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         room: resolve(__dirname, 'index.html'),
+        phone: resolve(__dirname, 'phone.html'),
       },
     },
   },
