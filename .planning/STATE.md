@@ -2,13 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 05
-current_phase_name: imu-sensor-pipeline
-status: ready
+current_phase: 04
+current_phase_name: phone-bootstrap-and-webrtc-channels
+status: "Phase 04 shipped — PR #1"
 stopped_at: UAT-5 pass — phase 04 complete (2026-07-09)
-last_updated: "2026-07-09T00:00:00.000Z"
+last_updated: "2026-07-09T00:24:43.603Z"
 last_activity: 2026-07-09
-last_activity_desc: Phase 04 UAT all 5 tests pass — advancing to Phase 05
 progress:
   total_phases: 8
   completed_phases: 5
@@ -30,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 Phase: 04 (phone-bootstrap-and-webrtc-channels) — EXECUTING
 Plan: 1 of 3
-Status: Executing Phase 04
-Last activity: 2026-07-08 — Phase 04 execution started
+Status: Phase 04 shipped — PR #1
+Last activity: 2026-07-09
 
 Progress: [███████░░░] 67%
 
