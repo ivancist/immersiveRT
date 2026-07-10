@@ -43,6 +43,7 @@ let registered = false;       // true once register ack confirmed; guards sendPh
 let reconnectToken: string | null = null;  // from pair-ack / join-ack; used for WT-drop WS reconnect
 let _reconnecting = false;    // true during attemptReconnect loop; suppresses ws.onclose → view-ended
 let sensorPipelineRunning = false; // true once startSensorPipeline has been called; guards re-calibration on desktop reconnect
+let desktopLeavingIntentionally = false; // set by DC "peer-leaving" message; cleared after peer-left handled
 
 // ── Sensor pipeline state (Plan 06/07) ───────────────────────────────────────
 let sessionStart = 0;                              // ms epoch at pipeline start
@@ -121,9 +122,7 @@ function attachGrantButton(): void {
       (DeviceMotionEvent as unknown as { requestPermission: () => Promise<string> }).requestPermission()
         .then(function(result: string) {
           if (result === 'granted') {
-            // After IMU grant: orientation lock + fullscreen (iOS Safari ignores both, harmless).
             tryLockPortrait();
-            tryRequestFullscreen();
             requestWakeLock();
             showView('view-connecting');
             startPhoneClient();
@@ -136,9 +135,7 @@ function attachGrantButton(): void {
         });
     } else {
       // Android / non-iOS: IMU access implicit — button tap IS the grant.
-      // Orientation lock + fullscreen need the synchronous user gesture context here.
       tryLockPortrait();
-      tryRequestFullscreen();
       (btn as HTMLButtonElement).disabled = true;
       btn.textContent = 'Activating…';
       setTimeout(function() {
@@ -686,6 +683,13 @@ function openChannelToPeer(peerId: string, isRecovery = false): void {
     signalSend('ice-candidate', peerId, evt.candidate);
   };
 
+  dc.onmessage = function(evt: MessageEvent) {
+    try {
+      const msg = JSON.parse(evt.data as string);
+      if (msg && msg.type === 'peer-leaving') { desktopLeavingIntentionally = true; }
+    } catch (_e) { /* binary sensor packets from phone — ignore */ }
+  };
+
   dc.onopen = function() {
     const entry = peerConnections.get(peerId);
     if (entry) { entry.channelOpen = true; }
@@ -713,12 +717,11 @@ function openChannelToPeer(peerId: string, isRecovery = false): void {
 function updateConnectingUI(): void {
   const chanOpenEl = document.getElementById('chan-open');
   if (chanOpenEl) { chanOpenEl.textContent = String(openChannelCount); }
-  // Show view-ended when all channels close while session is active.
-  // Desktop reload: briefly shows "Session ended" until player-ready fires and restores view-active.
-  // Desktop leave: stays on "Session ended" (no reconnect).
-  // sensorPipelineRunning stays true here so player-ready skips recalibration on reconnect.
+  // Show view-connecting when channels drop (desktop reload/network drop).
+  // Intentional desktop leave sends a DC "peer-leaving" message first, which sets
+  // desktopLeavingIntentionally — peer-left handler then overrides to view-ended.
   if (openChannelCount === 0 && sensorPipelineRunning) {
-    showView('view-ended');
+    showView('view-connecting');
   }
 }
 
@@ -1098,11 +1101,9 @@ async function handleServerPush(msg: SignalingMessage): Promise<void> {
       break;
 
     case 'peer-left': {
-      // reason='leave': desktop clicked Leave Room — show ended, reset calibration.
-      // reason='disconnect': desktop reloaded/network drop — skip calibration on reconnect.
-      const leaveReason = (msg.payload && msg.payload['reason'] as string) || 'disconnect';
       closePeer((msg.payload && msg.payload['peer_id'] as string) || '');
-      if (leaveReason === 'leave') {
+      if (desktopLeavingIntentionally) {
+        desktopLeavingIntentionally = false;
         sensorPipelineRunning = false;
         showView('view-ended');
       }
@@ -1241,10 +1242,15 @@ document.addEventListener('DOMContentLoaded', function() {
   phoneLog('loaded');
   attachGrantButton();
   showView('view-permission');
-
-  // Best-effort portrait lock at load time + again inside user gesture (see attachGrantButton).
-  // The CSS #landscape-overlay handles iOS Safari where screen.orientation.lock is unsupported.
   tryLockPortrait();
+
+  const fsBtn = document.getElementById('btn-fullscreen');
+  if (fsBtn) {
+    fsBtn.addEventListener('click', function() {
+      tryRequestFullscreen();
+      fsBtn.remove();
+    });
+  }
 
   // Fix 4: block pinch-zoom (multi-touch touchmove) and double-tap zoom.
   // viewport meta already sets maximum-scale=1/user-scalable=no but not all

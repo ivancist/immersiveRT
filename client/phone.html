@@ -32,14 +32,21 @@
       -webkit-touch-callout: none;
     }
 
+    html, body {
+      overflow: hidden;
+      height: 100%;
+    }
+
     body {
       background: var(--color-bg);
       color: var(--color-text-primary);
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
-      min-height: 100vh;
+      height: 100%;
       font-size: 15px;
       line-height: 1.5;
+      position: fixed;
+      width: 100%;
     }
 
     /* ──────────────────────────────────────────
@@ -224,6 +231,9 @@
       <p class="size-body text-secondary">Tap the button to enable motion control.</p>
       <div class="mt-lg">
         <button id="btn-grant-motion" class="btn" type="button">Grant Motion Access</button>
+      </div>
+      <div class="mt-md">
+        <button id="btn-fullscreen" class="btn" type="button" style="background:#333;font-size:13px;">Go Fullscreen</button>
       </div>
     </div>
 
