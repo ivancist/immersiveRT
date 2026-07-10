@@ -165,7 +165,7 @@ None yet.
 | 260710-wb4 | Prevent screen rotation: CSS landscape overlay + orientation lock in user gesture | 2026-07-10 | 00eb30d | [260710-wb4-add-landscape-lock-overlay-to-phone-html](./quick/260710-wb4-add-landscape-lock-overlay-to-phone-html/) |
 | 260710-whi | Four phone UX fixes: landscape CSS rotation, fullscreen, peer-left reason, view-ended on leave | 2026-07-10 | 8022055 | [260710-whi-four-phone-ux-fixes-css-90deg-landscape-](./quick/260710-whi-four-phone-ux-fixes-css-90deg-landscape-/) |
 | 260710-wt-race-and-fullscreen-hint | WT close race fix + fullscreen button → rotation hint | 2026-07-10 | 3e26c64 | [260710-wt-race-and-fullscreen-hint](./quick/260710-wt-race-and-fullscreen-hint/) |
-| 260711-0lh | Fix huge position drift: rotateDeviceToWorld applies primaryQuat directly, not conjugate | 2026-07-11 | ba3e172 | [260711-0lh-fix-huge-position-drift-making-phone-mot](./quick/260711-0lh-fix-huge-position-drift-making-phone-mot/) |
+| 260711-0lh | Fix huge position drift (REVERTED — broke on-device control, see 3703a0c; root cause still open, moved to /gsd-debug) | 2026-07-11 | 3703a0c | [260711-0lh-fix-huge-position-drift-making-phone-mot](./quick/260711-0lh-fix-huge-position-drift-making-phone-mot/) |
 
 ## Deferred Items
 

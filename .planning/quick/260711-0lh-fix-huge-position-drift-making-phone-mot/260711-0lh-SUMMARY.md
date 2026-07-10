@@ -51,8 +51,25 @@ coverage:
 
 duration: 8min
 completed: 2026-07-11
-status: complete
+status: reverted
 ---
+
+## POST-COMPLETION UPDATE (2026-07-11)
+
+On-device UAT showed this fix made control **worse**, not better ("moving
+without sense... more difficult to move intentionally than with drift").
+Root cause: `scene.ts:180-212` applies a hand-tuned, per-axis negation
+(`set(-rdx, -rdz, rdy)`) that was empirically calibrated in earlier sessions
+("Fix C, Fix 1") against the OLD conjugate `rotateDeviceToWorld()` output.
+The rotation-direction change here altered the world-frame vector's direction
+per-orientation (not a fixed axis remap), invalidating that calibration.
+
+Reverted in commit `3703a0c` (restores the conjugate implementation and
+removes `client/tests/phone-rotate.test.ts`). The underlying "huge drift,
+unusable" bug is still unresolved — likely inherent IMU double-integration
+noise rather than rotation-direction correctness (rotating a noisy vector by
+q vs q⁻¹ changes its direction, not its magnitude). Continuing diagnosis via
+`/gsd-debug`.
 
 # Phase quick-260711-0lh Plan 01: Fix huge position drift in phone motion controller Summary
 
