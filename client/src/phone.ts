@@ -92,11 +92,21 @@ function showView(id: string): void {
 // CRITICAL: DeviceMotionEvent.requestPermission() MUST be the first statement
 // inside the synchronous click handler — any async boundary (await, .then,
 // setTimeout) before the call breaks the iOS gesture stack (RESEARCH Pitfall 1).
+function tryLockPortrait(): void {
+  if (screen.orientation && typeof (screen.orientation as ScreenOrientation & { lock?: (type: string) => Promise<void> }).lock === 'function') {
+    (screen.orientation as ScreenOrientation & { lock: (type: string) => Promise<void> })
+      .lock('portrait')
+      .catch(function() { /* silently ignore: iOS / unsupported browsers */ });
+  }
+}
+
 function attachGrantButton(): void {
   const btn = document.getElementById('btn-grant-motion');
   if (!btn) { return; }
 
   btn.addEventListener('click', function() {
+    // Retry portrait lock inside the user gesture — Chrome Android requires this.
+    tryLockPortrait();
     if (typeof DeviceMotionEvent !== 'undefined' &&
         typeof (DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> }).requestPermission === 'function') {
       // iOS 13+: requestPermission() MUST be the first call — no await before it.
@@ -1215,14 +1225,9 @@ document.addEventListener('DOMContentLoaded', function() {
   attachGrantButton();
   showView('view-permission');
 
-  // Fix B: attempt portrait orientation lock so the phone page doesn't rotate
-  // mid-session. Best-effort — iOS Safari does not support screen.orientation.lock
-  // and will silently reject. All browsers are expected to ignore failures.
-  if (screen.orientation && typeof (screen.orientation as ScreenOrientation & { lock?: (type: string) => Promise<void> }).lock === 'function') {
-    (screen.orientation as ScreenOrientation & { lock: (type: string) => Promise<void> })
-      .lock('portrait')
-      .catch(function() { /* silently ignore: iOS / unsupported browsers */ });
-  }
+  // Best-effort portrait lock at load time + again inside user gesture (see attachGrantButton).
+  // The CSS #landscape-overlay handles iOS Safari where screen.orientation.lock is unsupported.
+  tryLockPortrait();
 
   // Fix 4: block pinch-zoom (multi-touch touchmove) and double-tap zoom.
   // viewport meta already sets maximum-scale=1/user-scalable=no but not all
