@@ -6,14 +6,14 @@ current_phase: 06
 current_phase_name: desktop-receive-decode-and-rendering
 status: executing
 stopped_at: Phase 06 Plan 02 complete
-last_updated: "2026-07-10T08:54:42.364Z"
+last_updated: "2026-07-10T10:09:32.076Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 27
-  completed_plans: 25
+  completed_plans: 26
   percent: 63
 ---
 
@@ -79,6 +79,7 @@ Progress: [█████████░] 91%
 | Phase 05 P07 | 3 | 3 tasks | 3 files |
 | Phase 06 P02 | 7 | 2 tasks | 5 files |
 | Phase 06 P03 | 15 | 3 tasks | 5 files |
+| Phase 06 P04 | 61 | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -132,6 +133,9 @@ Recent decisions affecting current work:
 - Phase 6 Plan 02: decode.ts imports SCHEMA_VERSION + BUF_SIZE from ./encode — single source of truth for byte offsets (never redefines)
 - Phase 6 Plan 02: RFC 1982 half-distance isNewerSeq — diff = (newSeq - lastSeq) & 0xFFFF; accept if diff > 0 && diff <= 32767 (handles 65535→0 wraparound)
 - Phase 6 Plan 02: PlayerState stores plain JS numbers, no THREE types — decouples store from WebGL context for jsdom-testable unit testing
+- [Phase ?]: Phase 6 Plan 04: THREE.Quaternion.set(x,y,z,w) — w is scalar; pass (qx,qy,qz,qw) not (qw,qx,qy,qz)
+- [Phase ?]: Phase 6 Plan 04: console.log (not console.debug) for decode drop messages — Chrome filters debug at Info level
+- [Phase ?]: Phase 6 Plan 04: Namespace imports (import * as decode) to keep grep counts at exactly 1 per function name in room.ts
 
 ### Pending Todos
 
@@ -158,6 +162,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-10T08:54:42.360Z
+Last session: 2026-07-10T10:09:13.091Z
 Stopped at: Phase 06 UI-SPEC approved
 Resume file: .planning/phases/06-desktop-receive-decode-and-rendering/06-UI-SPEC.md

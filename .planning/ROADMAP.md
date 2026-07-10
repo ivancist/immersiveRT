@@ -183,7 +183,7 @@ Plans:
   4. A Three.js cube rotates smoothly following phone orientation with no visible jitter — the render loop reads from the target-state store and applies SLERP at the configured alpha (default 0.3)
   5. Two phones in the same room each drive a distinct Three.js object — both objects move simultaneously and independently on the same desktop
 
-**Plans**: 3/5 plans executed
+**Plans**: 4/5 plans executed
 **UI hint**: yes
 
 Plans:
@@ -198,7 +198,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 06-04-PLAN.md — Per-player boxes + SLERP + receive wiring → phone motion rotates its cube; two phones two cubes (DESK-02, DESK-05)
+- [x] 06-04-PLAN.md — Per-player boxes + SLERP + receive wiring → phone motion rotates its cube; two phones two cubes (DESK-02, DESK-05)
 
 **Wave 4** *(blocked on Wave 3)*
 
@@ -249,6 +249,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 3. Session and Pairing | 4/4 | Complete    | 2026-07-07 |
 | 4. Phone Bootstrap and WebRTC Channels | 1/3 | In Progress|  |
 | 5. Sensor Fusion and Packet Encoding | 7/7 | Complete   | 2026-07-09 |
-| 6. Desktop Receive, Decode, and Rendering | 3/5 | In Progress|  |
+| 6. Desktop Receive, Decode, and Rendering | 4/5 | In Progress|  |
 | 7. SDK Public API | 0/TBD | Not started | - |
 | 8. Demo Game | 0/TBD | Not started | - |
