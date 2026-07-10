@@ -465,6 +465,8 @@
       font-size: 13px;
       line-height: 1.5;
       pointer-events: none;
+      white-space: pre; /* required: textContent uses \n for multiline diagnostic blocks (D-15) */
+      color: var(--color-text-secondary);
     }
     #game-tab-overlay {
       position: fixed;
@@ -642,7 +644,7 @@
   <div id="game-hud">
     <div id="hud-slots">0/0 connected</div>
     <div id="hud-mode">pos: gesture&nbsp;&nbsp;[P to cycle]</div>
-    <div>G:on&nbsp;&nbsp;A:on&nbsp;&nbsp;H:on&nbsp;&nbsp;T:off</div>
+    <div id="hud-keys">G:on&nbsp;&nbsp;A:on&nbsp;&nbsp;H:on&nbsp;&nbsp;T:off</div>
   </div>
 
   <!-- Per-player numeric HUD panel (D-15, H key toggle) -->
