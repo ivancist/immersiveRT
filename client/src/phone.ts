@@ -43,7 +43,6 @@ let registered = false;       // true once register ack confirmed; guards sendPh
 let reconnectToken: string | null = null;  // from pair-ack / join-ack; used for WT-drop WS reconnect
 let _reconnecting = false;    // true during attemptReconnect loop; suppresses ws.onclose → view-ended
 let sensorPipelineRunning = false; // true once startSensorPipeline has been called; guards re-calibration on desktop reconnect
-let desktopLeavingIntentionally = false; // set by DC "peer-leaving" message; cleared after peer-left handled
 
 // ── Sensor pipeline state (Plan 06/07) ───────────────────────────────────────
 let sessionStart = 0;                              // ms epoch at pipeline start
@@ -683,13 +682,6 @@ function openChannelToPeer(peerId: string, isRecovery = false): void {
     signalSend('ice-candidate', peerId, evt.candidate);
   };
 
-  dc.onmessage = function(evt: MessageEvent) {
-    try {
-      const msg = JSON.parse(evt.data as string);
-      if (msg && msg.type === 'peer-leaving') { desktopLeavingIntentionally = true; }
-    } catch (_e) { /* binary sensor packets from phone — ignore */ }
-  };
-
   dc.onopen = function() {
     const entry = peerConnections.get(peerId);
     if (entry) { entry.channelOpen = true; }
@@ -1101,9 +1093,9 @@ async function handleServerPush(msg: SignalingMessage): Promise<void> {
       break;
 
     case 'peer-left': {
+      const leaveReason = (msg.payload && msg.payload['reason'] as string) || 'disconnect';
       closePeer((msg.payload && msg.payload['peer_id'] as string) || '');
-      if (desktopLeavingIntentionally) {
-        desktopLeavingIntentionally = false;
+      if (leaveReason === 'leave') {
         sensorPipelineRunning = false;
         showView('view-ended');
       }

@@ -1569,12 +1569,6 @@ async function leaveRoom(): Promise<void> {
   escMenuShown  = false;
 
   // ── Fix 2: close all WebRTC peer connections ──────────────────────────────
-  // Notify phones we're leaving intentionally so they show "Session ended" not "Connecting...".
-  for (const [, dc] of desktopChannels) {
-    if (dc.readyState === 'open') {
-      try { dc.send(JSON.stringify({ type: 'peer-leaving' })); } catch (_e) {}
-    }
-  }
   for (const [, pc] of desktopPeers) {
     try { pc.close(); } catch (_e) { /* ignore */ }
   }
