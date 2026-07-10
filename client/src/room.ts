@@ -10,6 +10,10 @@ export {};
 // Three.js scene lifecycle — plan 03 (initScene, stubs) + plan 04 (addPlayer, removePlayer)
 import { initScene, addPlayerToScene, removePlayerFromScene } from './scene';
 
+// Sensor packet decode pipeline (plan 04: decode→guard→seq-drop→store in ondatachannel)
+import * as decode from './sensor/decode';
+import * as playerStore from './playerStore';
+
 // Ambient declaration for the QRCode CDN global (qrcode@1.4.4 via jsdelivr).
 // Only the shape that room.ts actually calls is typed here.
 declare const QRCode: {
@@ -39,6 +43,12 @@ let pendingUsername: string | null = null; // username sent with join-room, used
 // WebRTC state — desktop side (Phase 4 Plan 02: minimal answerer for PHONE-03)
 const desktopPeers = new Map<string, RTCPeerConnection>(); // phoneId → RTCPeerConnection
 const pendingICE = new Map<string, RTCIceCandidateInit[]>(); // phoneId → ICE candidates queued before setRemoteDescription resolves
+
+// Scene slot tracking — maps phoneId to display slot (1-based, capped at 8).
+// Used to register first-data-channel phones (before player-ready fires) and to
+// find the phoneId for a departing slot in player-left cleanup (DESK-02).
+const phoneSlots = new Map<string, number>(); // phoneId → slot
+let nextSceneSlot = 1; // auto-increment counter for phones that arrive before player-ready
 
 // Diagnostic: set true to force TURN-relay-only ICE (bypasses direct LAN path).
 // Useful to isolate whether DTLS failure is specific to the direct host-to-host path.
@@ -435,9 +445,50 @@ function handleOffer(msg: Record<string, unknown>): void {
 
   pc.ondatachannel = function (evt: RTCDataChannelEvent) {
     const dc = evt.channel;
+
+    // Set binaryType BEFORE assigning onopen/onmessage (Pitfall 3: Firefox defaults to 'blob';
+    // setting after open has no effect on already-buffered messages).
+    dc.binaryType = 'arraybuffer';
+
     dc.onopen = function () {
       console.info('[WebRTC] data channel open phone=' + tag);
       sendMessage('rtc-channel-ready', { with: phoneId });
+    };
+
+    // Decode→finite-guard→seq-drop→store pipeline (DESK-02, T-06-09, T-06-05b, T-06-11).
+    // No sensor packet is relayed back through the server from this handler (DESK-02: P2P only).
+    dc.onmessage = function (msgEvt: MessageEvent<ArrayBuffer>) {
+      // T-06-03/T-06-04: decode packet — null on truncated or version-mismatch buffer
+      const pkt = decode.decodePacket(msgEvt.data);
+      if (!pkt) {
+        console.debug('[decode] dropped malformed packet from phone=' + tag);
+        return;
+      }
+
+      // T-06-09: reject non-finite quaternion fields before they reach THREE.Quaternion
+      if (!decode.isSafePacket(pkt)) {
+        console.debug('[decode] dropped non-finite quaternion from phone=' + tag);
+        return;
+      }
+
+      // T-06-05b: RFC 1982 seq-drop — reject out-of-order / duplicate / replayed packets
+      const state = playerStore.targetStateStore.get(phoneId);
+      if (state && !decode.isNewerSeq(pkt.seq, state.lastSeq)) {
+        console.debug('[decode] dropped out-of-order seq ' + pkt.seq + ' (last=' + state.lastSeq + ') from phone=' + tag);
+        return;
+      }
+
+      // Register the phone in the scene on first accepted packet (if player-ready hasn't fired yet).
+      // player-ready is authoritative (correct slot + username from server); this is a safety net.
+      if (!phoneSlots.has(phoneId)) {
+        const assignedSlot = nextSceneSlot <= 8 ? nextSceneSlot++ : 8;
+        phoneSlots.set(phoneId, assignedSlot);
+        // addPlayerToScene is idempotent: if player-ready already registered this phoneId, this is a no-op.
+        addPlayerToScene(phoneId, assignedSlot, 'Slot ' + assignedSlot);
+      }
+
+      // Store the decoded packet — scene.ts rAF loop reads this each frame
+      playerStore.updateTargetState(phoneId, pkt);
     };
   };
 
@@ -524,7 +575,13 @@ function handlePlayerReady(msg: Record<string, unknown>): void {
     }
   }
 
-  // Add the player's 3D object to the scene (no-op stub in plan 03; filled in plan 04)
+  // Register phoneId → slot mapping so player-left can find the phoneId by slot for cleanup.
+  // Also used by ondatachannel safety-net to skip auto-assignment if player-ready already ran.
+  if (phoneId) {
+    phoneSlots.set(phoneId, slot);
+  }
+
+  // Add the player's 3D object to the scene (plan 04: box mesh, HSL color, CSS2DLabel, axes)
   if (phoneId) {
     addPlayerToScene(phoneId, slot, username);
   }
@@ -1015,10 +1072,27 @@ function handleRoomEvent(payload: Record<string, unknown>): void {
       updateSlotRow(slot, 'connected', username);
       appendEventLog('player-reconnected', slot, username);
       break;
-    case 'player-left':
+    case 'player-left': {
       updateSlotRow(slot, 'empty', '');
       appendEventLog('player-left', slot, username);
+      // Clean up the departing player's scene object + store + peer connection.
+      // Resolve phoneId from the slot → phoneId reverse scan over phoneSlots.
+      let departedPhoneId: string | undefined;
+      for (const [pid, s] of phoneSlots) {
+        if (s === slot) { departedPhoneId = pid; break; }
+      }
+      if (departedPhoneId) {
+        removePlayerFromScene(departedPhoneId);
+        playerStore.removePlayerState(departedPhoneId);
+        phoneSlots.delete(departedPhoneId);
+        const departedPc = desktopPeers.get(departedPhoneId);
+        if (departedPc) {
+          try { departedPc.close(); } catch (e) { /* ignore */ }
+          desktopPeers.delete(departedPhoneId);
+        }
+      }
       break;
+    }
     case 'room-full':
       appendEventLog('room-full', 0, '');
       break;
