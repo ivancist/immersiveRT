@@ -808,9 +808,32 @@ function startSensorPipeline(zuptThreshold: number, kalmanQ: number): void {
   // Attach touch listeners once per lifetime (idempotent guard inside).
   attachTouchListeners();
 
-  // PRIMARY orientation: OS-fused DeviceOrientationEvent → quaternion (D-03).
-  // Do NOT run a second Madgwick pass on this — the OS already fuses gyro + mag.
+  // PRIMARY orientation: OS-fused orientation → quaternion (D-03).
+  // Prefer deviceorientationabsolute (compass-referenced alpha, no yaw drift on Android).
+  // Fall back to generic deviceorientation when absolute is unavailable (iOS always falls here —
+  // iOS alpha is device-relative; yaw drift on iOS is a platform constraint, not a code bug).
+  // Do NOT run a secondary Madgwick pass on either source — the OS already fuses gyro + mag.
+
+  let hasAbsoluteOrientation = false;
+
+  // deviceorientationabsolute: Android Chrome only; alpha is compass-referenced (drift-free yaw).
+  // Not available on iOS — TypeScript does not include this event in WindowEventMap, hence cast.
+  (window as EventTarget).addEventListener('deviceorientationabsolute', function(e: Event) {
+    const doe = e as DeviceOrientationEvent;
+    if (doe.alpha == null) { return; }
+    hasAbsoluteOrientation = true;
+    primaryQuat = eulerToQuat(
+      safeFloat(doe.alpha),
+      safeFloat(doe.beta),
+      safeFloat(doe.gamma),
+    );
+  });
+
+  // Generic deviceorientation: alpha is device-relative on iOS; may be device-relative on Android
+  // if deviceorientationabsolute has not yet fired. Guard with hasAbsoluteOrientation so Android
+  // does not overwrite the compass-corrected quaternion with the lower-quality fallback.
   window.addEventListener('deviceorientation', function(e: DeviceOrientationEvent) {
+    if (hasAbsoluteOrientation) { return; } // absolute source active — skip relative fallback
     primaryQuat = eulerToQuat(
       safeFloat(e.alpha),
       safeFloat(e.beta),

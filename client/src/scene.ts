@@ -14,8 +14,8 @@
  *   from the scene and release GPU resources.
  *
  * updateScene() [private, called from rAF]: SLERP each player's mesh quaternion at
- *   SLERP_ALPHA = 0.3 (D-12). Also: touch flash (100ms emissive burst — D-14), motion
- *   trail ring buffer update, and numeric HUD textContent update — all inside the single
+ *   SLERP_ALPHA = 0.3 (D-12). Also: live touch flash (emissive white while touchActive — D-14),
+ *   motion trail ring buffer update, and numeric HUD textContent update — all inside the single
  *   rAF loop, no new loop, no per-frame THREE allocation (T-06-12, Pitfall 6).
  *
  * Toggle setters: toggleGrid / toggleAxes / toggleTrail / toggleNumericHud — all use
@@ -45,14 +45,13 @@ interface TrailHandle {
 // ──────────────────────────────────────────────────────────────────────────────
 // PlayerObject interface
 //   plan 03: mesh only
-//   plan 04: adds label, axes, flashing
+//   plan 04: adds label, axes
 //   plan 05: adds trail, slot, username
 // ──────────────────────────────────────────────────────────────────────────────
 export interface PlayerObject {
   mesh: THREE.Mesh;
   label: CSS2DObject;
   axes: THREE.AxesHelper;
-  flashing: boolean;
   trail: TrailHandle;
   slot: number;
   username: string;
@@ -135,7 +134,7 @@ function updateTrail(trail: TrailHandle, x: number, y: number, z: number): void 
 // Private: update scene from player state each rAF tick
 //   (a) SLERP orientation     — always
 //   (b) Position update       — always
-//   (c) Touch flash           — when state.touchActive && !obj.flashing (D-14, T-06-12)
+//   (c) Touch flash           — live: emissive white when state.touchActive, black otherwise (D-14)
 //   (d) Trail ring buffer     — when trailVisible (Pattern 8, no alloc)
 //   (e) Numeric HUD text      — when numericHudVisible (textContent only, T-06-10b)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -147,30 +146,39 @@ function updateScene(): void {
     if (!state) { continue; }
 
     // (a) SLERP toward latest decoded orientation (D-12, DESK-05).
-    // scratchQuat.set(x, y, z, w) — THREE.Quaternion uses (x, y, z, w) where w is scalar.
-    // SensorPacket stores (qw, qx, qy, qz) so we pass (qx, qy, qz, qw) here (plan 04 fix).
+    // Coordinate frame transform — W3C DeviceOrientationEvent earth frame → Three.js world frame:
+    //   W3C earth: X=East, Y=North, Z=Up (right-handed)
+    //   Three.js : X=right, Y=up, Z=toward viewer (right-handed)
+    //   Mapping  : W3C X→ Three.js X (unchanged), W3C Z(Up)→ Three.js Y(up), W3C Y(North)→ Three.js -Z
+    //   This is a -90° rotation around X. Applied as conjugate sandwich q_R·q_w3c·q_R^{-1}
+    //   with q_R = {w:√2/2, x:-√2/2, y:0, z:0} → result: {w:qw, x:qx, y:qz, z:-qy}.
+    //
+    // Without this transform, qy (W3C roll, gamma) ended up in Three.js y (yaw), and
+    // qz (W3C yaw, alpha) ended up in Three.js z (roll) → visually swapped (Fix 6).
     obj.mesh.quaternion.slerp(
-      scratchQuat.set(state.qx, state.qy, state.qz, state.qw),
+      scratchQuat.set(state.qx, state.qz, -state.qy, state.qw),
       SLERP_ALPHA
     );
 
-    // (b) Update position from active mode (D-13)
+    // (b) Update position from active mode (D-13).
+    // X is negated to align phone IMU device-X with Three.js world-X (Fix 7):
+    // Moving the phone to the right should move the box right in the scene.
+    // The phone's accelerometer X axis is positive toward the device's left edge
+    // (when held portrait facing user), so negate to match world right = +X.
     if (positionMode === 'gesture') {
-      obj.mesh.position.set(state.dx, state.dy, state.dz);
+      obj.mesh.position.set(-state.dx, state.dy, state.dz);
     } else {
-      obj.mesh.position.set(state.px, state.py, state.pz);
+      obj.mesh.position.set(-state.px, state.py, state.pz);
     }
 
-    // (c) Touch flash — D-14: instant 100ms white emissive burst when phone touch is active.
-    // Guard with obj.flashing to prevent re-triggering while flash is still in progress.
-    // setHex on the emissive Color mutates the existing material — no new allocation.
-    if (state.touchActive && !obj.flashing) {
-      obj.flashing = true;
-      (obj.mesh.material as THREE.MeshStandardMaterial).emissive.setHex(0xffffff);
-      setTimeout(function () {
-        (obj.mesh.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000);
-        obj.flashing = false;
-      }, 100);
+    // (c) Touch flash — D-14: live per-frame emissive tracking.
+    // Emissive is white while the phone reports touchActive; returns to black the same frame
+    // touchActive becomes false. No setTimeout, no per-frame allocation.
+    const material = obj.mesh.material as THREE.MeshStandardMaterial;
+    if (state.touchActive) {
+      material.emissive.setHex(0xffffff);
+    } else {
+      material.emissive.setHex(0x000000);
     }
 
     // (d) Motion trail — push current mesh position into the preallocated ring buffer.
@@ -298,7 +306,7 @@ export function initScene(canvas: HTMLCanvasElement, container: HTMLElement): vo
  *
  * Creates a BoxGeometry(1,1,1) mesh with a per-slot HSL MeshStandardMaterial,
  * attaches a CSS2DObject name label (textContent only — T-06-10 XSS guard),
- * adds an AxesHelper(0.5) child (visible per current axesVisible state), and
+ * adds an AxesHelper(1.5) child (visible per current axesVisible state), and
  * creates a motion trail ring buffer (Line, hidden per current trailVisible state).
  *
  * All objects allocated once and stored in playerObjects map (no per-frame alloc — Pitfall 6).
@@ -331,7 +339,9 @@ export function addPlayerToScene(phoneId: string, slot: number, username: string
 
   // Axes helper to visualise orientation axes per player.
   // Apply current axesVisible state so late-joining players match existing toggle state.
-  const axes = new THREE.AxesHelper(0.5);
+  // AxesHelper(1.5): extends 1.5 units from center, clearly beyond the 0.5-unit box half-size.
+  // AxesHelper(0.5) would hide axes exactly at the box surface — Fix 1 corrects this.
+  const axes = new THREE.AxesHelper(1.5);
   axes.visible = axesVisible; // Pitfall 4: set .visible, never re-add
   mesh.add(axes);
 
@@ -341,7 +351,7 @@ export function addPlayerToScene(phoneId: string, slot: number, username: string
   trail.line.visible = trailVisible; // Pitfall 4: .visible matches current state
   scene.add(trail.line); // trail is a sibling of mesh in the scene (not a child)
 
-  playerObjects.set(phoneId, { mesh, label, axes, flashing: false, trail, slot, username });
+  playerObjects.set(phoneId, { mesh, label, axes, trail, slot, username });
 }
 
 /**
@@ -393,13 +403,14 @@ export function toggleGrid(): void {
  */
 export function toggleAxes(): void {
   axesVisible = !axesVisible;
+  console.log('[scene] toggleAxes axesVisible=' + axesVisible + ' playerCount=' + playerObjects.size);
   for (const obj of playerObjects.values()) {
     obj.axes.visible = axesVisible;
   }
 }
 
 /**
- * Toggle per-player motion trail visibility (T/D key — D-15).
+ * Toggle per-player motion trail visibility (T key — D-15).
  * Flips trailVisible and every trail line's .visible (Pitfall 4 — never re-add).
  */
 export function toggleTrail(): void {
@@ -418,6 +429,40 @@ export function toggleNumericHud(): void {
   numericHudVisible = !numericHudVisible;
   const el = document.getElementById('game-hud-players');
   if (el) { el.style.display = numericHudVisible ? '' : 'none'; }
+}
+
+/**
+ * Reset all player positions to the scene origin (R key — dead-reckoning drift reset).
+ *
+ * Per CLAUDE.md constraint: "Position tracking is best-effort; games must design
+ * interactions around drift-reset moments." R is that moment.
+ *
+ * Zeros dx/dy/dz and px/py/pz in targetStateStore for every connected phone so the
+ * next incoming packet starts from origin. Also resets mesh.position immediately so
+ * the visual snaps without waiting for the next packet. Clears the motion trail ring
+ * buffer to avoid a ghosting artefact from pre-reset positions (no new allocation —
+ * fills existing Float32Array with 0 and sets needsUpdate, Pitfall 6).
+ */
+export function resetAllPlayerPositions(): void {
+  for (const [phoneId, obj] of playerObjects) {
+    // Snap scene mesh to origin immediately (visible before next sensor packet arrives)
+    obj.mesh.position.set(0, 0, 0);
+
+    // Zero position fields in the target-state store so the interpolation loop
+    // reads (0,0,0) until a new sensor packet updates them
+    const state = targetStateStore.get(phoneId);
+    if (state) {
+      state.dx = 0; state.dy = 0; state.dz = 0;
+      state.px = 0; state.py = 0; state.pz = 0;
+    }
+
+    // Clear trail ring buffer: fill positions array with 0 and flag geometry dirty.
+    // head reset to 0 so the ring-buffer write pointer starts fresh from position[0].
+    obj.trail.positions.fill(0);
+    obj.trail.head = 0;
+    (obj.trail.line.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
+  }
+  console.log('[scene] resetAllPlayerPositions — zeroed ' + playerObjects.size + ' player(s)');
 }
 
 /**

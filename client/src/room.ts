@@ -19,6 +19,7 @@ import {
   toggleTrail,
   toggleNumericHud,
   getToggleStates,
+  resetAllPlayerPositions,
 } from './scene';
 
 // Sensor packet decode pipeline (plan 04: decode→guard→seq-drop→store in ondatachannel)
@@ -187,13 +188,15 @@ function formatTimestamp(date?: Date): string {
 function updateHud(): void {
   const states = getToggleStates();
 
-  // Connected count = phones with an open RTCDataChannel;
-  // max = total registered phones (phoneSlots.size)
+  // Connected count = phones with an open RTCDataChannel (live dc.readyState check).
+  // maxCount = total data channels (populated in ondatachannel, before player-ready fires).
+  // Using desktopChannels.size rather than phoneSlots.size because phoneSlots is 0
+  // until the first player-ready arrives, causing a "1/0" counter during initial connect.
   let connectedCount = 0;
   for (const dc of desktopChannels.values()) {
     if (dc.readyState === 'open') { connectedCount++; }
   }
-  const maxCount = phoneSlots.size;
+  const maxCount = desktopChannels.size;
 
   const hudSlots = document.getElementById('hud-slots');
   const hudMode  = document.getElementById('hud-mode');
@@ -208,10 +211,11 @@ function updateHud(): void {
   }
   if (hudKeys) {
     hudKeys.textContent =
-      'G:' + (states.gridVisible     ? 'on' : 'off') + '  ' +
-      'A:' + (states.axesVisible     ? 'on' : 'off') + '  ' +
+      'G:' + (states.gridVisible       ? 'on' : 'off') + '  ' +
+      'A:' + (states.axesVisible       ? 'on' : 'off') + '  ' +
       'H:' + (states.numericHudVisible ? 'on' : 'off') + '  ' +
-      'T:' + (states.trailVisible    ? 'on' : 'off');
+      'T:' + (states.trailVisible      ? 'on' : 'off') + '  ' +
+      'R:reset';
   }
 }
 
@@ -298,7 +302,7 @@ function renderTabRoster(): void {
 // Game keyboard handler (plan 05 — UI-SPEC Keyboard Interaction Contract)
 //
 // Active only when game view is visible (gameViewShown guard).
-// keydown: P/G/A/H/T/D toggle scene state; Tab shows roster overlay.
+// keydown: P/G/A/H/T/R toggle scene state; Tab shows roster overlay.
 // keyup: Tab hides roster overlay.
 // Attached once via attachGameKeyListeners() idempotency guard.
 // ──────────────────────────────────────────────────────────────────────────────
@@ -333,10 +337,13 @@ function attachGameKeyListeners(): void {
         updateHud();
         break;
       case 't':
-      case 'd':
-        // Toggle motion trail / drama mode — both T and D map to single trail toggle (D-14, D-15)
+        // Toggle motion trail visibility (D-15)
         toggleTrail();
         updateHud();
+        break;
+      case 'r':
+        // Reset all player positions to origin — dead-reckoning drift reset (CLAUDE.md constraint)
+        resetAllPlayerPositions();
         break;
       case 'tab':
         // Show TAB roster overlay while held; preventDefault stops browser focus-cycling (T-06-13)
@@ -1116,6 +1123,25 @@ function handleJoinAck(payload: Record<string, unknown>): void {
     updateSlotRow(slot, 'connected', pendingUsername || 'Player');
   }
   if (pendingUsername) { appendEventLog('player-joined', slot, pendingUsername); }
+
+  // Fix 8: If phones are already paired (roster shows any connected/hold slot), transition
+  // directly to game view without waiting for a new player-ready event.
+  // Scenario: desktop reloads while phones are connected. Server sends join-ack with
+  // existing slot state, but no new player-ready fires because phones haven't re-offered yet.
+  // Phones will re-offer via peer-joined → openChannelToPeer → onnegotiationneeded → offer.
+  // When that arrives, handleOffer → DC open → rtc-channel-ready → player-ready → addPlayerToScene.
+  // Pre-showing the game view ensures the scene is ready before the first new player-ready.
+  if (!gameViewShown && Array.isArray(slots) && slots.some(function (s) {
+    return s.status === 'connected' || s.status === 'hold';
+  })) {
+    gameViewShown = true;
+    showGameView();
+    const gCanvas = document.getElementById('game-canvas') as HTMLCanvasElement | null;
+    const gContainer = document.getElementById('game-container') as HTMLElement | null;
+    if (gCanvas && gContainer) {
+      initScene(gCanvas, gContainer);
+    }
+  }
 }
 
 function handleJoinError(reason: string): void {
