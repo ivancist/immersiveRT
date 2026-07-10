@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Session and Pairing** - Room join, QR code + short code pairing, slot assignment, reconnect hold, 2-8 player support, room lifecycle events (completed 2026-07-07)
 - [ ] **Phase 4: Phone Bootstrap and WebRTC Channels** - Phone web app delivery, iOS DeviceMotion permission gate, Wake Lock, heartbeat, unreliable data channels to all desktops
 - [x] **Phase 5: Sensor Fusion and Packet Encoding** - On-device Madgwick, adaptive ZUPT, Kalman dead-reckoning, gesture displacement, touch capture, 36-byte binary DataView packet at 60Hz (completed 2026-07-09)
-- [ ] **Phase 6: Desktop Receive, Decode, and Rendering** - WebTransport desktop connection, WebRTC peer accept from all phones, binary decode, sequence-drop, target-state store, Three.js slerp loop
+- [x] **Phase 6: Desktop Receive, Decode, and Rendering** - WebTransport desktop connection, WebRTC peer accept from all phones, binary decode, sequence-drop, target-state store, Three.js slerp loop (completed 2026-07-10)
 - [ ] **Phase 7: SDK Public API** - npm package `immersive-rt`, imperative + event APIs, TypeScript types, latency overlay, drift-honest naming, raw orientation opt-in
 - [ ] **Phase 8: Demo Game** - Multi-player Three.js scene, orientation-driven objects, gesture-launched flick action, latency overlay always visible
 
@@ -183,7 +183,7 @@ Plans:
   4. A Three.js cube rotates smoothly following phone orientation with no visible jitter — the render loop reads from the target-state store and applies SLERP at the configured alpha (default 0.3)
   5. Two phones in the same room each drive a distinct Three.js object — both objects move simultaneously and independently on the same desktop
 
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans complete
 **UI hint**: yes
 
 Plans:
@@ -202,7 +202,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 06-05-PLAN.md — Precision-eval instrumentation: keyboard toggles, persistent HUD, TAB roster, numeric HUD, touch flash, motion trail (DESK-05)
+- [x] 06-05-PLAN.md — Precision-eval instrumentation: keyboard toggles, persistent HUD, TAB roster, numeric HUD, touch flash, motion trail (DESK-05)
 
 ### Phase 7: SDK Public API
 
@@ -249,6 +249,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 3. Session and Pairing | 4/4 | Complete    | 2026-07-07 |
 | 4. Phone Bootstrap and WebRTC Channels | 1/3 | In Progress|  |
 | 5. Sensor Fusion and Packet Encoding | 7/7 | Complete   | 2026-07-09 |
-| 6. Desktop Receive, Decode, and Rendering | 4/5 | In Progress|  |
+| 6. Desktop Receive, Decode, and Rendering | 5/5 | Complete   | 2026-07-10 |
 | 7. SDK Public API | 0/TBD | Not started | - |
 | 8. Demo Game | 0/TBD | Not started | - |
