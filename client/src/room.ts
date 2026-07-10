@@ -327,8 +327,8 @@ function renderTabRoster(): void {
 // Attached once via attachGameKeyListeners() idempotency guard.
 // ──────────────────────────────────────────────────────────────────────────────
 // Show the Esc leave-confirmation overlay (Fix 2).
-// First Esc press shows this; second Esc or "Leave Room" button calls leaveRoom().
-// "Stay" button or any non-Esc key dismisses it.
+// First Esc press shows this. Only "Leave Room" button click calls leaveRoom().
+// Second Esc, "Stay" button, or any non-Esc key all dismiss the overlay without leaving.
 function showEscMenu(): void {
   const overlay = document.getElementById('game-esc-overlay');
   if (overlay) { overlay.style.display = 'flex'; }
@@ -350,14 +350,11 @@ function attachGameKeyListeners(): void {
     // Only dispatch when game view is active
     if (!gameViewShown) { return; }
 
-    // If the Esc menu is open, Esc confirms leave, any other key dismisses it.
+    // If the Esc menu is open, any key (including Esc) dismisses it — only the
+    // "Leave Room" button click triggers leaveRoom(). This prevents accidental leave
+    // from a double-tap of Esc.
     if (escMenuShown) {
-      if (evt.key.toLowerCase() === 'escape') {
-        dismissEscMenu();
-        leaveRoom();
-      } else {
-        dismissEscMenu();
-      }
+      dismissEscMenu();
       return;
     }
 

@@ -190,9 +190,17 @@ function updateScene(): void {
     // here every frame so the effective position starts at origin after reset.
     const off = obj.positionOffset;
     if (positionMode === 'gesture') {
-      const rdx = state.dx - off.dx;
-      const rdy = state.dy - off.dy;
-      const rdz = state.dz - off.dz;
+      // Dead-zone: ignore micro-noise below threshold. dx/dy/dz accumulate continuously
+      // from the phone's dead-reckoning ZUPT filter; residual accelerometer noise causes
+      // slow drift when the phone is stationary. Zeroing below threshold keeps the cube
+      // still. Threshold 0.002 is intentionally conservative — tune upward if drift persists.
+      // (configurable: see SUMMARY § Dead-zone threshold)
+      const POSITION_DEADZONE = 0.002;
+      let rdx = state.dx - off.dx;
+      let rdy = state.dy - off.dy;
+      let rdz = state.dz - off.dz;
+      const mag = Math.sqrt(rdx * rdx + rdy * rdy + rdz * rdz);
+      if (mag < POSITION_DEADZONE) { rdx = 0; rdy = 0; rdz = 0; }
       obj.mesh.position.set(-rdx, -rdz, rdy);
     } else {
       const rpx = state.px - off.px;
