@@ -6,9 +6,9 @@ current_phase: 06
 current_phase_name: desktop-receive-decode-and-rendering
 status: executing
 stopped_at: Phase 06 complete — phone-disconnect bug fixed
-last_updated: "2026-07-10T17:55:16.325Z"
+last_updated: "2026-07-10T23:45:11.915Z"
 last_activity: 2026-07-10
-last_activity_desc: Phase 06 complete — all position axes corrected (quick task)
+last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 8
   completed_phases: 6
@@ -81,6 +81,7 @@ Progress: [█████████░] 91%
 | Phase 06 P03 | 15 | 3 tasks | 5 files |
 | Phase 06 P04 | 61 | 3 tasks | 2 files |
 | Phase 06 P06-05 | 240 | 2 tasks | 4 files |
+| Phase quick-260711-0lh P01 | 8min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -141,6 +142,7 @@ Recent decisions affecting current work:
 - [Phase ?]: view-lobby hidden=true by default: module scripts deferred, lobby must be hidden before first paint to prevent FOUC on /room/ reload
 - [Phase ?]: sensorPipelineRunning flag in phone.ts: server replays player-ready on every desktop reconnect; phone must skip recalibration when already active
 - [Phase ?]: Per-frame emissive touch flash: live state.touchActive check in updateScene rAF loop — no setTimeout, no timers, no race conditions
+- [Phase ?]: Fixed rotateDeviceToWorld to apply primaryQuat directly (not conjugate) - matches scene.ts device-to-world convention, resolving huge position drift
 
 ### Pending Todos
 
@@ -163,6 +165,7 @@ None yet.
 | 260710-wb4 | Prevent screen rotation: CSS landscape overlay + orientation lock in user gesture | 2026-07-10 | 00eb30d | [260710-wb4-add-landscape-lock-overlay-to-phone-html](./quick/260710-wb4-add-landscape-lock-overlay-to-phone-html/) |
 | 260710-whi | Four phone UX fixes: landscape CSS rotation, fullscreen, peer-left reason, view-ended on leave | 2026-07-10 | 8022055 | [260710-whi-four-phone-ux-fixes-css-90deg-landscape-](./quick/260710-whi-four-phone-ux-fixes-css-90deg-landscape-/) |
 | 260710-wt-race-and-fullscreen-hint | WT close race fix + fullscreen button → rotation hint | 2026-07-10 | 3e26c64 | [260710-wt-race-and-fullscreen-hint](./quick/260710-wt-race-and-fullscreen-hint/) |
+| 260711-0lh | Fix huge position drift: rotateDeviceToWorld applies primaryQuat directly, not conjugate | 2026-07-11 | ba3e172 | [260711-0lh-fix-huge-position-drift-making-phone-mot](./quick/260711-0lh-fix-huge-position-drift-making-phone-mot/) |
 
 ## Deferred Items
 
@@ -172,6 +175,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-10T17:54:58.210Z
+Last session: 2026-07-10T23:44:24.950Z
 Stopped at: Phase 06 UI-SPEC approved
 Resume file: .planning/phases/06-desktop-receive-decode-and-rendering/06-UI-SPEC.md
