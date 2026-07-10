@@ -50,9 +50,9 @@ created: 2026-07-10
 
 ## Wave 0 Requirements
 
-- [ ] `client/src/__tests__/decode.test.ts` — stubs for DESK-01, DESK-02
-- [ ] `client/src/__tests__/playerStore.test.ts` — stubs for DESK-03
-- [ ] `client/src/__tests__/seqDrop.test.ts` — stubs for DESK-03
+- [ ] `client/tests/decode.test.ts` — stubs for DESK-03, DESK-04
+- [ ] `client/tests/target-state.test.ts` — stubs for DESK-04
+- [ ] `client/tests/seq-drop.test.ts` — stubs for DESK-03
 - [ ] vitest if not already installed in client workspace
 
 *Note: DESK-04 (SLERP rendering) and DESK-05 (two-player) are manual verifications — automated unit coverage covers decode and seq-drop logic only.*
