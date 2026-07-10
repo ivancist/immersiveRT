@@ -428,6 +428,63 @@
        Hidden utility
     ────────────────────────────────────────── */
     [hidden] { display: none !important; }
+
+    /* ──────────────────────────────────────────
+       Game View — Three.js canvas + HUD + overlays
+       (UI-SPEC Component Inventory, Phase 6)
+    ────────────────────────────────────────── */
+    #game-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: none;
+    }
+    #game-canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #game-hud {
+      position: fixed;
+      top: 12px; left: 16px;
+      z-index: 10;
+      color: var(--color-text-primary);
+      font-family: "Courier New", Courier, monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      pointer-events: none;
+      display: none;
+    }
+    #game-hud-players {
+      position: fixed;
+      bottom: 16px; left: 16px;
+      z-index: 10;
+      font-family: "Courier New", Courier, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      pointer-events: none;
+    }
+    #game-tab-overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      z-index: 20;
+      display: none;
+      padding: 32px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--color-text-primary);
+      pointer-events: none;
+    }
+    .player-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-text-primary);
+      text-shadow: 0 1px 2px #000;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -570,6 +627,31 @@
         <p id="pair-error-hint" class="size-label text-secondary">Go back and scan the QR code again.</p>
       </div>
 
+    </div>
+  </div>
+
+  <!-- ──────────────────────────────────────────
+       Game View — full-viewport 3D canvas + overlays
+       (hidden by default; activated by showGameView() on first player-ready — D-04, D-05)
+  ────────────────────────────────────────── -->
+  <div id="game-container">
+    <canvas id="game-canvas"></canvas>
+  </div>
+
+  <!-- Persistent minimal HUD (D-06) — hidden until showGameView() -->
+  <div id="game-hud">
+    <div id="hud-slots">0/0 connected</div>
+    <div id="hud-mode">pos: gesture&nbsp;&nbsp;[P to cycle]</div>
+    <div>G:on&nbsp;&nbsp;A:on&nbsp;&nbsp;H:on&nbsp;&nbsp;T:off</div>
+  </div>
+
+  <!-- Per-player numeric HUD panel (D-15, H key toggle) -->
+  <div id="game-hud-players"></div>
+
+  <!-- TAB-held roster overlay (D-07) -->
+  <div id="game-tab-overlay">
+    <div id="tab-roster">
+      <p class="size-heading">Players</p>
     </div>
   </div>
 
