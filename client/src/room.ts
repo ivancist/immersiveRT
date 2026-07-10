@@ -42,6 +42,12 @@ const pendingICE = new Map<string, RTCIceCandidateInit[]>(); // phoneId → ICE 
 const DEBUG_FORCE_RELAY = false;
 
 // ──────────────────────────────────────────────────────────────────────────────
+// WebTransport state
+// ──────────────────────────────────────────────────────────────────────────────
+let transport: WebTransport | null = null;
+let useWt = false;
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
 function showView(id: string): void {
@@ -99,6 +105,129 @@ function formatTimestamp(date?: Date): string {
   const m = String(d.getMinutes()).padStart(2, '0');
   const s = String(d.getSeconds()).padStart(2, '0');
   return '[' + h + ':' + m + ':' + s + ']';
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// WebTransport helpers
+// ──────────────────────────────────────────────────────────────────────────────
+
+// One-shot request: open a bidi stream, write the envelope, read the full response.
+async function sendWtRequest(t: WebTransport, envelope: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const stream = await t.createBidirectionalStream();
+  const writer = stream.writable.getWriter();
+  await writer.write(new TextEncoder().encode(JSON.stringify(envelope)));
+  await writer.close();
+
+  const reader = stream.readable.getReader();
+  let buf = new Uint8Array(0);
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) { break; }
+    const merged = new Uint8Array(buf.length + chunk.value.length);
+    merged.set(buf);
+    merged.set(chunk.value, buf.length);
+    buf = merged;
+  }
+  return JSON.parse(new TextDecoder().decode(buf)) as Record<string, unknown>;
+}
+
+// Fire-and-forget send: open a bidi stream, write the envelope, drain the readable.
+async function sendWtMessage(t: WebTransport, envelope: Record<string, unknown>): Promise<void> {
+  const stream = await t.createBidirectionalStream();
+  const writer = stream.writable.getWriter();
+  await writer.write(new TextEncoder().encode(JSON.stringify(envelope)));
+  await writer.close();
+  // Drain readable to release back-pressure on the server's write side.
+  const reader = stream.readable.getReader();
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) { break; }
+  }
+}
+
+// Server-push listener using .getReader() instead of for-await-of.
+// iOS WebKit pre-26.4 does not implement Symbol.asyncIterator on ReadableStream,
+// so `for await (const s of transport.incomingBidirectionalStreams)` throws
+// "undefined is not a function". The .getReader() API works on all versions.
+async function listenForServerPushes(t: WebTransport): Promise<void> {
+  console.debug('[WT] Desktop push listener starting');
+  try {
+    const bidiReader = t.incomingBidirectionalStreams.getReader();
+    while (true) {
+      const result = await bidiReader.read();
+      if (result.done) { break; }
+      processWtPush(result.value); // process concurrently, do not await
+    }
+    console.debug('[WT] Desktop push listener ended');
+  } catch (err) {
+    console.debug('[WT] Desktop push listener error:', err);
+  }
+}
+
+function processWtPush(stream: WebTransportBidirectionalStream): void {
+  const reader = stream.readable.getReader();
+  let buf = new Uint8Array(0);
+  (function readNext() {
+    reader.read().then(function(chunk) {
+      if (chunk.done) {
+        // T-06-01: wrap JSON.parse in try/catch; malformed pushes are logged and ignored, never dispatched.
+        try {
+          const msg = JSON.parse(new TextDecoder().decode(buf)) as Record<string, unknown>;
+          onServerMessage(msg);
+        } catch (e) {
+          console.warn('[WT] processWtPush: malformed JSON, ignoring:', e);
+        }
+        return;
+      }
+      const merged = new Uint8Array(buf.length + chunk.value.length);
+      merged.set(buf);
+      merged.set(chunk.value, buf.length);
+      buf = merged;
+      readNext();
+    }).catch(function(err: unknown) {
+      console.warn('[WT] processWtPush: read error:', err);
+    });
+  })();
+}
+
+function setupTransportClosedHandler(t: WebTransport): void {
+  function onWtClose(): void {
+    transport = null;
+    useWt = false;
+    console.info('[WT] Desktop transport closed — falling back to WS');
+    connectWS(null);
+  }
+  t.closed.then(onWtClose).catch(onWtClose);
+}
+
+async function connectDesktopWT(): Promise<boolean> {
+  if (typeof WebTransport === 'undefined') { return false; }
+  const wtUrl = 'https://' + location.hostname + ':4433';
+  try {
+    transport = new WebTransport(wtUrl);
+    await transport.ready;
+
+    // Verify getReader() is available (iOS/WebKit compat).
+    if (typeof (transport.incomingBidirectionalStreams as ReadableStream).getReader !== 'function') {
+      throw new Error('incomingBidirectionalStreams.getReader not supported');
+    }
+
+    // Start push listener BEFORE sending anything (RESEARCH Pitfall 1 — avoids dropped pushes).
+    listenForServerPushes(transport);
+
+    // Register.
+    myId = crypto.randomUUID();
+    await sendWtMessage(transport, { type: 'register', from: myId, to: '', payload: {} });
+
+    useWt = true;
+    setupTransportClosedHandler(transport);
+    return true;
+  } catch (err) {
+    console.warn('[WT] Desktop connect failed, falling back to WS:', err);
+    transport = null;
+    useWt = false;
+    return false;
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
