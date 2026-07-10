@@ -503,6 +503,7 @@ function processWtPush(stream: WebTransportBidirectionalStream): void {
 
 function setupTransportClosedHandler(t: WebTransport): void {
   function onWtClose(): void {
+    if (transport !== t) { return; } // leaveRoom already replaced transport; don't clobber new instance
     transport = null;
     useWt = false;
     console.info('[WT] Desktop transport closed — falling back to WS');

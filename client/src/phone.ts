@@ -1244,14 +1244,6 @@ document.addEventListener('DOMContentLoaded', function() {
   showView('view-permission');
   tryLockPortrait();
 
-  const fsBtn = document.getElementById('btn-fullscreen');
-  if (fsBtn) {
-    fsBtn.addEventListener('click', function() {
-      tryRequestFullscreen();
-      fsBtn.remove();
-    });
-  }
-
   // Fix 4: block pinch-zoom (multi-touch touchmove) and double-tap zoom.
   // viewport meta already sets maximum-scale=1/user-scalable=no but not all
   // browsers honour that (Firefox Android ignores user-scalable=no).
