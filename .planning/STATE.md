@@ -6,7 +6,7 @@ current_phase: 06
 current_phase_name: desktop-receive-decode-and-rendering
 status: executing
 stopped_at: Phase 06 Plan 02 complete
-last_updated: "2026-07-10T10:27:51.900Z"
+last_updated: "2026-07-10T17:55:16.325Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 06 execution started
 progress:
@@ -80,6 +80,7 @@ Progress: [█████████░] 91%
 | Phase 06 P02 | 7 | 2 tasks | 5 files |
 | Phase 06 P03 | 15 | 3 tasks | 5 files |
 | Phase 06 P04 | 61 | 3 tasks | 2 files |
+| Phase 06 P06-05 | 240 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -136,6 +137,10 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 6 Plan 04: THREE.Quaternion.set(x,y,z,w) — w is scalar; pass (qx,qy,qz,qw) not (qw,qx,qy,qz)
 - [Phase ?]: Phase 6 Plan 04: console.log (not console.debug) for decode drop messages — Chrome filters debug at Info level
 - [Phase ?]: Phase 6 Plan 04: Namespace imports (import * as decode) to keep grep counts at exactly 1 per function name in room.ts
+- [Phase ?]: leaveRoom async+await: sendWtMessage must complete before transport.close() — sync try/catch cannot catch async rejections
+- [Phase ?]: view-lobby hidden=true by default: module scripts deferred, lobby must be hidden before first paint to prevent FOUC on /room/ reload
+- [Phase ?]: sensorPipelineRunning flag in phone.ts: server replays player-ready on every desktop reconnect; phone must skip recalibration when already active
+- [Phase ?]: Per-frame emissive touch flash: live state.touchActive check in updateScene rAF loop — no setTimeout, no timers, no race conditions
 
 ### Pending Todos
 
@@ -162,6 +167,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-10T10:27:51.896Z
+Last session: 2026-07-10T17:54:58.210Z
 Stopped at: Phase 06 UI-SPEC approved
 Resume file: .planning/phases/06-desktop-receive-decode-and-rendering/06-UI-SPEC.md
