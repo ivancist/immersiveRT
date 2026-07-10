@@ -8,7 +8,7 @@ status: executing
 stopped_at: Phase 06 complete — phone-disconnect bug fixed
 last_updated: "2026-07-10T17:55:16.325Z"
 last_activity: 2026-07-10
-last_activity_desc: Phase 06 complete — phone-disconnect bug fixed (quick task)
+last_activity_desc: Phase 06 complete — all position axes corrected (quick task)
 progress:
   total_phases: 8
   completed_phases: 6
@@ -159,6 +159,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260707-f1x | Fix cert permissions for cold start | 2026-07-07 | 880ea1b | [260707-f1x-fix-cert-permissions-for-cold-start](./quick/260707-f1x-fix-cert-permissions-for-cold-start/) |
 | 260710-fix-phone-disconnect-on-leave | Phone transitions to view-connecting when desktop leaves room | 2026-07-10 | 268bf50 | [260710-fix-phone-disconnect-on-leave](./quick/260710-fix-phone-disconnect-on-leave/) |
+| 260710-w83 | Fix inverted position axes: negate all three components in both position paths | 2026-07-10 | b38e0e5 | [260710-w83-fix-inverted-position-axes-negate-all-th](./quick/260710-w83-fix-inverted-position-axes-negate-all-th/) |
 
 ## Deferred Items
 
