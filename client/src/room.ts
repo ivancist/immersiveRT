@@ -60,6 +60,11 @@ const pendingICE = new Map<string, RTCIceCandidateInit[]>(); // phoneId → ICE 
 // without traversing peer connections (plan 05, T-06-13: TAB roster reads live channel state)
 const desktopChannels = new Map<string, RTCDataChannel>(); // phoneId → RTCDataChannel
 
+// Phones that have fired player-ready this session — persisted to sessionStorage for reconnect
+// detection (Fix A: only show game view on reload if at least one phone reached player-ready).
+// Key: phoneId (from payload.player_id). Cleared on leaveRoom / handleJoinError cleanup.
+const playerReadyPhones = new Set<string>();
+
 // Scene slot tracking — maps phoneId to display slot (1-based, capped at 8).
 // Used to register first-data-channel phones (before player-ready fires) and to
 // find the phoneId for a departing slot in player-left cleanup (DESK-02).
@@ -797,8 +802,16 @@ function handlePlayerReady(msg: Record<string, unknown>): void {
   const payload = (msg && msg.payload) ? msg.payload as Record<string, unknown> : {};
   const slot = (payload.slot as number) || 0;
   const username = (payload.username as string) || '';
-  const phoneId = typeof msg.from === 'string' ? msg.from : '';
-  console.info('[WebRTC] player-ready received:', payload);
+
+  // Fix B (Regression B): Server omits `msg.from` in player-ready — phoneId is in payload.player_id.
+  // The server serialises: { "type": "player-ready", "payload": { "player_id": "...", "slot": N, "username": "..." } }
+  // with no top-level `from` field. Reading msg.from always gave '' (falsy), breaking phoneSlots /
+  // slotUsernames lookups so the TAB roster showed "(empty)" and HUD counter showed wrong values.
+  const phoneId = (typeof payload.player_id === 'string' && payload.player_id)
+    ? payload.player_id
+    : (typeof msg.from === 'string' ? msg.from : '');
+
+  console.info('[WebRTC] player-ready received: slot=' + slot + ' username=' + username + ' phoneId=' + phoneId.slice(0, 8));
   appendEventLog('player-ready', slot, username);
 
   // Desktop-only guard (D-16): the server routes player-ready to BOTH the desktop
@@ -810,6 +823,18 @@ function handlePlayerReady(msg: Record<string, unknown>): void {
   if (window.location.pathname.startsWith('/phone')) {
     console.info('[room] player-ready on phone path — skipping game view transition');
     return;
+  }
+
+  // Fix A: persist player-ready arrival to sessionStorage so handleJoinAck can detect
+  // the reconnect case on desktop reload (phones were previously ready → go straight to game view).
+  if (phoneId && currentRoom) {
+    playerReadyPhones.add(phoneId);
+    try {
+      sessionStorage.setItem(
+        'prPhones_' + currentRoom.room_code,
+        JSON.stringify([...playerReadyPhones])
+      );
+    } catch (_e) { /* sessionStorage quota exceeded — non-critical */ }
   }
 
   // First player-ready: show game view and init the 3D scene (guarded — D-04, D-05)
@@ -1124,22 +1149,29 @@ function handleJoinAck(payload: Record<string, unknown>): void {
   }
   if (pendingUsername) { appendEventLog('player-joined', slot, pendingUsername); }
 
-  // Fix 8: If phones are already paired (roster shows any connected/hold slot), transition
-  // directly to game view without waiting for a new player-ready event.
-  // Scenario: desktop reloads while phones are connected. Server sends join-ack with
-  // existing slot state, but no new player-ready fires because phones haven't re-offered yet.
-  // Phones will re-offer via peer-joined → openChannelToPeer → onnegotiationneeded → offer.
-  // When that arrives, handleOffer → DC open → rtc-channel-ready → player-ready → addPlayerToScene.
-  // Pre-showing the game view ensures the scene is ready before the first new player-ready.
-  if (!gameViewShown && Array.isArray(slots) && slots.some(function (s) {
-    return s.status === 'connected' || s.status === 'hold';
-  })) {
-    gameViewShown = true;
-    showGameView();
-    const gCanvas = document.getElementById('game-canvas') as HTMLCanvasElement | null;
-    const gContainer = document.getElementById('game-container') as HTMLElement | null;
-    if (gCanvas && gContainer) {
-      initScene(gCanvas, gContainer);
+  // Fix A (Regression A corrected): show game view on reconnect ONLY if phones previously
+  // reached player-ready (not just if slots are connected — "connected" includes own desktop slot,
+  // which would incorrectly show game view before any phone pairs on a fresh join).
+  // Signal: sessionStorage key 'prPhones_<roomCode>' written by handlePlayerReady.
+  // On desktop reload after phones were paired: this key exists → go straight to game view.
+  // On fresh join: key does not exist → show QR/players screen; wait for player-ready normally.
+  if (!gameViewShown) {
+    const prKey = 'prPhones_' + roomCode;
+    let hasPriorReadyPhones = false;
+    try {
+      const stored = sessionStorage.getItem(prKey);
+      const parsed = stored ? (JSON.parse(stored) as unknown) : [];
+      hasPriorReadyPhones = Array.isArray(parsed) && parsed.length > 0;
+    } catch (_e) { /* parse error — treat as no prior phones */ }
+
+    if (hasPriorReadyPhones) {
+      gameViewShown = true;
+      showGameView();
+      const gCanvas = document.getElementById('game-canvas') as HTMLCanvasElement | null;
+      const gContainer = document.getElementById('game-container') as HTMLElement | null;
+      if (gCanvas && gContainer) {
+        initScene(gCanvas, gContainer);
+      }
     }
   }
 }
@@ -1149,9 +1181,11 @@ function handleJoinError(reason: string): void {
   if (currentRoom || reason === 'invalid_token') {
     if (currentRoom) {
       sessionStorage.removeItem('slot_' + currentRoom.room_code);
+      sessionStorage.removeItem('prPhones_' + currentRoom.room_code); // Fix A: clear player-ready tracking
       localStorage.removeItem('slot_' + currentRoom.room_code);
       localStorage.removeItem('token_' + currentRoom.room_code + '_' + currentRoom.slot);
     }
+    playerReadyPhones.clear(); // Fix A: clear in-memory set alongside sessionStorage
     currentRoom = null;
     history.replaceState(null, '', '/');
     showView('view-lobby');
@@ -1440,9 +1474,11 @@ function leaveRoom(): void {
   // Clear session so reload doesn't re-enter the room
   if (currentRoom) {
     sessionStorage.removeItem('slot_' + currentRoom.room_code);
+    sessionStorage.removeItem('prPhones_' + currentRoom.room_code); // Fix A: clear player-ready tracking
     localStorage.removeItem('slot_' + currentRoom.room_code);
     localStorage.removeItem('token_' + currentRoom.room_code + '_' + currentRoom.slot);
   }
+  playerReadyPhones.clear(); // Fix A: clear in-memory set alongside sessionStorage
   currentRoom = null;
   history.pushState(null, '', '/');
   showView('view-lobby');
