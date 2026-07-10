@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-07-10T20:13:51.436Z",
+  "phase": "06",
+  "phase_name": "desktop-receive-decode-and-rendering",
+  "phase_dir": ".planning/phases/06-desktop-receive-decode-and-rendering",
+  "plan": 5,
+  "task": 3,
+  "total_tasks": 3,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "Scene instrumentation (touch flash, trail, numeric HUD, toggles)", "status": "done", "commit": "1e5d08f"},
+    {"id": 2, "name": "Keyboard controls, persistent HUD, TAB roster", "status": "done", "commit": "ddf5c41"},
+    {"id": 3, "name": "Human verify — partially approved", "status": "in_progress", "progress": "Most items verified; phone-disconnect on leave unresolved"}
+  ],
+  "remaining_tasks": [
+    {"id": "bug-1", "name": "Fix Leave Room: close phone WebRTC+WT before desktop transport closes", "status": "not_started"},
+    {"id": "bug-2", "name": "Reduce position drift (increase POSITION_DEADZONE or fix ZUPT threshold)", "status": "advisory"}
+  ],
+  "blockers": [
+    {"description": "Phone stays connected after desktop clicks Leave Room — desktop closes own WT/WS but does not signal server or phone to disconnect", "type": "technical", "workaround": "User can manually reload phone page"}
+  ],
+  "async_jobs": [],
+  "human_actions_pending": [],
+  "decisions": [
+    {"decision": "dx/dy/dz are absolute accumulated displacements; R key uses positionOffset subtraction", "rationale": "Discovered during verification — cannot zero store directly", "phase": "06"},
+    {"decision": "Quaternion frame: set(qx, qz, -qy, qw)", "rationale": "W3C earth frame to Three.js world frame mapping", "phase": "06"},
+    {"decision": "Position mapping: set(-rdx, -rdz, rdy)", "rationale": "Corrected after user reported up/down and forward/backward inverted", "phase": "06"},
+    {"decision": "game view before calibration complete is intentional", "rationale": "player-ready fires when WebRTC DC opens, cube is static during 3s countdown", "phase": "06"}
+  ],
+  "uncommitted_files": [
+    ".planning/phases/05-sensor-fusion-and-packet-encoding/05-UAT.md (pre-existing)"
+  ],
+  "next_action": "Read server/src/ to find how Rust server handles desktop leave/disconnect and notifies phones. Fix room.ts leaveRoom() to send that signal before closing local transports.",
+  "context_notes": "Phase 06 all 5 plans committed. 06-05 SUMMARY.md written but one bug unresolved. ROADMAP shows Complete which is optimistic — ship after phone-disconnect bug is fixed."
+}
