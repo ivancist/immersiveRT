@@ -160,6 +160,7 @@ None yet.
 | 260707-f1x | Fix cert permissions for cold start | 2026-07-07 | 880ea1b | [260707-f1x-fix-cert-permissions-for-cold-start](./quick/260707-f1x-fix-cert-permissions-for-cold-start/) |
 | 260710-fix-phone-disconnect-on-leave | Phone transitions to view-connecting when desktop leaves room | 2026-07-10 | 268bf50 | [260710-fix-phone-disconnect-on-leave](./quick/260710-fix-phone-disconnect-on-leave/) |
 | 260710-w83 | Fix inverted position axes: negate all three components in both position paths | 2026-07-10 | b38e0e5 | [260710-w83-fix-inverted-position-axes-negate-all-th](./quick/260710-w83-fix-inverted-position-axes-negate-all-th/) |
+| 260710-wb4 | Prevent screen rotation: CSS landscape overlay + orientation lock in user gesture | 2026-07-10 | 00eb30d | [260710-wb4-add-landscape-lock-overlay-to-phone-html](./quick/260710-wb4-add-landscape-lock-overlay-to-phone-html/) |
 
 ## Deferred Items
 
