@@ -691,6 +691,10 @@ function openChannelToPeer(peerId: string, isRecovery = false): void {
 function updateConnectingUI(): void {
   const chanOpenEl = document.getElementById('chan-open');
   if (chanOpenEl) { chanOpenEl.textContent = String(openChannelCount); }
+  if (openChannelCount === 0 && sensorPipelineRunning) {
+    sensorPipelineRunning = false;
+    showView('view-connecting');
+  }
 }
 
 // ── Helpers (Plan 07) ────────────────────────────────────────────────────────
