@@ -161,6 +161,7 @@ None yet.
 | 260710-fix-phone-disconnect-on-leave | Phone transitions to view-connecting when desktop leaves room | 2026-07-10 | 268bf50 | [260710-fix-phone-disconnect-on-leave](./quick/260710-fix-phone-disconnect-on-leave/) |
 | 260710-w83 | Fix inverted position axes: negate all three components in both position paths | 2026-07-10 | b38e0e5 | [260710-w83-fix-inverted-position-axes-negate-all-th](./quick/260710-w83-fix-inverted-position-axes-negate-all-th/) |
 | 260710-wb4 | Prevent screen rotation: CSS landscape overlay + orientation lock in user gesture | 2026-07-10 | 00eb30d | [260710-wb4-add-landscape-lock-overlay-to-phone-html](./quick/260710-wb4-add-landscape-lock-overlay-to-phone-html/) |
+| 260710-whi | Four phone UX fixes: landscape CSS rotation, fullscreen, peer-left reason, view-ended on leave | 2026-07-10 | 8022055 | [260710-whi-four-phone-ux-fixes-css-90deg-landscape-](./quick/260710-whi-four-phone-ux-fixes-css-90deg-landscape-/) |
 
 ## Deferred Items
 
