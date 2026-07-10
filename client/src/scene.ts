@@ -82,6 +82,7 @@ let gridRef: THREE.GridHelper | null = null;
 // Guards: player-ready fires once per phone — must init only once (Pitfall 2, T-06-08)
 let sceneInitialized = false;
 let animRunning = false;
+let animFrameId = 0; // rAF handle — stored so cleanupScene() can cancel the loop
 
 // Per-player 3D objects — populated by addPlayerToScene()
 const playerObjects = new Map<string, PlayerObject>();
@@ -252,7 +253,7 @@ function updateScene(): void {
 // Private: rAF loop
 // ──────────────────────────────────────────────────────────────────────────────
 function animate(): void {
-  requestAnimationFrame(animate);
+  animFrameId = requestAnimationFrame(animate);
   updateScene();
   renderer.render(scene, camera);
   labelRenderer.render(scene, camera);
@@ -417,6 +418,42 @@ export function removePlayerFromScene(phoneId: string): void {
   (obj.trail.line.material as THREE.LineBasicMaterial).dispose();
 
   playerObjects.delete(phoneId);
+}
+
+/**
+ * Tear down the scene for leaveRoom(). Removes all players, cancels the rAF loop,
+ * disposes the renderer/labelRenderer, and resets sceneInitialized so initScene()
+ * can re-create on next join.
+ *
+ * The CSS2DRenderer DOM node (labelRenderer.domElement) is also removed so the
+ * container element is clean for the next initScene call.
+ */
+export function cleanupScene(): void {
+  // Remove all player meshes/trails and release GPU resources
+  for (const phoneId of [...playerObjects.keys()]) {
+    removePlayerFromScene(phoneId);
+  }
+
+  // Cancel rAF loop
+  if (animFrameId) {
+    cancelAnimationFrame(animFrameId);
+    animFrameId = 0;
+  }
+  animRunning = false;
+
+  // Dispose renderer (releases WebGL context)
+  if (renderer) {
+    renderer.dispose();
+  }
+
+  // Remove CSS2DRenderer DOM node from container
+  if (labelRenderer && labelRenderer.domElement.parentNode) {
+    labelRenderer.domElement.parentNode.removeChild(labelRenderer.domElement);
+  }
+
+  // Reset init guard so initScene() can re-create on next join
+  sceneInitialized = false;
+  console.info('[scene] cleanupScene — scene torn down, ready for next join');
 }
 
 /**

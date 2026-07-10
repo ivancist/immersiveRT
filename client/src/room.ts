@@ -13,6 +13,7 @@ import {
   initScene,
   addPlayerToScene,
   removePlayerFromScene,
+  cleanupScene,
   cyclePositionMode,
   toggleGrid,
   toggleAxes,
@@ -1009,6 +1010,28 @@ function initDesktopPage(): void {
     if (storedSlot) {
       const slotNum = parseInt(storedSlot, 10);
       currentRoom = { slot: slotNum, room_code: codeFromPath };
+
+      // Fix 4b: if phones previously reached player-ready, show the game view
+      // IMMEDIATELY before the WS/WT reconnects — prevents view-room from flashing
+      // for the ~200–500ms it takes for join-ack to arrive and handleJoinAck to fire.
+      // renderRoomPage is still called (wires leave btn, slot roster) but its
+      // view-room show is suppressed by the gameViewShown guard inside it.
+      const prKeyEarly = 'prPhones_' + codeFromPath;
+      let hasPriorReadyPhonesEarly = false;
+      try {
+        const stored = sessionStorage.getItem(prKeyEarly);
+        const parsed = stored ? (JSON.parse(stored) as unknown) : [];
+        hasPriorReadyPhonesEarly = Array.isArray(parsed) && (parsed as unknown[]).length > 0;
+      } catch (_e) { /* parse error — treat as no prior phones */ }
+
+      if (hasPriorReadyPhonesEarly) {
+        gameViewShown = true;
+        showGameView();
+        const earlyCanvas = document.getElementById('game-canvas') as HTMLCanvasElement | null;
+        const earlyContainer = document.getElementById('game-container') as HTMLElement | null;
+        if (earlyCanvas && earlyContainer) { initScene(earlyCanvas, earlyContainer); }
+      }
+
       renderRoomPage(slotNum, codeFromPath, null);
       // Only reconnect when already on the room path (D-17).
       // WT-first: if WT connected, sendReconnect uses sendWtRequest; else fall back to WS.
@@ -1258,11 +1281,15 @@ function handleJoinError(reason: string): void {
 }
 
 function renderRoomPage(slot: number, roomCode: string, pairingUrl: string | null): void {
-  // Hide lobby, show room
+  // Fix 4b: if the game view is already showing (e.g. reconnect with prPhones_ sentinel),
+  // do NOT unhide view-room — that would overlap the game canvas. Still wire buttons and
+  // update metadata below so the leave button and slot roster stay functional.
   const lobby = document.getElementById('view-lobby');
   const room  = document.getElementById('view-room');
-  if (lobby) { lobby.hidden = true; }
-  if (room)  { room.hidden = false; }
+  if (!gameViewShown) {
+    if (lobby) { lobby.hidden = true; }
+    if (room)  { room.hidden = false; }
+  }
 
   // Update room title
   const roomTitle = document.getElementById('room-title');
@@ -1519,31 +1546,65 @@ function appendEventLog(event: string, slot: number, username: string): void {
 }
 
 function leaveRoom(): void {
-  // Clear session so reload doesn't re-enter the room
+  // ── Fix 1: hide all game UI elements immediately ──────────────────────────
+  const gameContainer    = document.getElementById('game-container');
+  const gameHud          = document.getElementById('game-hud');
+  const gameTabOverlay   = document.getElementById('game-tab-overlay');
+  const gameEscOverlay   = document.getElementById('game-esc-overlay');
+  if (gameContainer)  { gameContainer.style.display  = 'none'; }
+  if (gameHud)        { gameHud.style.display         = 'none'; }
+  if (gameTabOverlay) { gameTabOverlay.style.display  = 'none'; }
+  if (gameEscOverlay) { gameEscOverlay.style.display  = 'none'; }
+  gameViewShown = false;
+  escMenuShown  = false;
+
+  // ── Fix 2: close all WebRTC peer connections ──────────────────────────────
+  for (const [, pc] of desktopPeers) {
+    try { pc.close(); } catch (_e) { /* ignore */ }
+  }
+  desktopPeers.clear();
+  desktopChannels.clear();
+
+  // Remove all players from the Three.js scene and tear down the renderer
+  // so initScene() can re-create cleanly on the next join.
+  cleanupScene();
+  phoneSlots.clear();
+  slotUsernames.clear();
+  nextSceneSlot = 1;
+
+  // ── Fix 1 continued: session cleanup + navigate to lobby ─────────────────
   if (currentRoom) {
     sessionStorage.removeItem('slot_' + currentRoom.room_code);
-    sessionStorage.removeItem('prPhones_' + currentRoom.room_code); // Fix A: clear player-ready tracking
+    sessionStorage.removeItem('prPhones_' + currentRoom.room_code);
     localStorage.removeItem('slot_' + currentRoom.room_code);
     localStorage.removeItem('token_' + currentRoom.room_code + '_' + currentRoom.slot);
   }
-  playerReadyPhones.clear(); // Fix A: clear in-memory set alongside sessionStorage
+  playerReadyPhones.clear();
   currentRoom = null;
   history.pushState(null, '', '/');
   showView('view-lobby');
   showLobbyActions();
+
+  // ── Fix 2: send leave-room then close transport ───────────────────────────
+  // Send leave-room BEFORE closing so the server frees the slot cleanly rather
+  // than waiting for the hold-timer on an abrupt disconnect.
   if (useWt && transport) {
-    // WT path: fire-and-forget leave-room; transport stays open for the next join (D-03).
-    sendWtMessage(transport, { type: 'leave-room', from: myId ?? '', to: '', payload: {} });
-  } else if (ws && ws.readyState === WebSocket.OPEN) {
-    // WS path: send leave-room and keep the WS open — server frees the slot immediately.
-    // Closing the WS races with the data frame (FIN can arrive before the message),
-    // triggering on_client_disconnect which starts a hold timer instead.
-    // Keeping the WS open eliminates the race; the connection is reused for the next join.
-    ws.send(JSON.stringify({ type: 'leave-room', from: myId, to: '', payload: {} }));
-  } else {
-    if (ws) { ws.close(); ws = null; }
-    connectWS(null);
+    try { sendWtMessage(transport, { type: 'leave-room', from: myId ?? '', to: '', payload: {} }); } catch (_e) {}
+    try { transport.close(); } catch (_e) {}
+    transport = null;
+    useWt = false;
+    wtConnectPromise = null;
   }
+  if (ws) {
+    if (ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify({ type: 'leave-room', from: myId, to: '', payload: {} })); } catch (_e) {}
+    }
+    try { ws.close(); } catch (_e) {}
+    ws = null;
+  }
+
+  // Reconnect WS for the next join (user may create/join a new room immediately).
+  connectWS(null);
 }
 
 function showLobbyActions(): void {

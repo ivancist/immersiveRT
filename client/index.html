@@ -513,6 +513,11 @@
       font-weight: 700;
       margin: 0 0 4px;
     }
+    #esc-dialog-body {
+      font-size: 14px;
+      color: var(--color-text-secondary);
+      margin: 6px 0 0;
+    }
     #esc-dialog-hint {
       font-size: 12px;
       color: var(--color-text-secondary);
@@ -716,15 +721,16 @@
     </div>
   </div>
 
-  <!-- Esc leave-confirmation overlay (Fix 2) — pointer-events on by default -->
+  <!-- Esc leave-confirmation overlay — pointer-events on by default -->
   <div id="game-esc-overlay">
     <div id="esc-dialog">
       <p id="esc-dialog-title">Leave Room?</p>
+      <p id="esc-dialog-body">Your phone connection will be closed.</p>
       <div id="esc-buttons">
         <button id="btn-esc-leave">Leave Room</button>
         <button id="btn-esc-stay">Stay</button>
       </div>
-      <p id="esc-dialog-hint">Press Esc again to leave &bull; any key or Stay to cancel</p>
+      <p id="esc-dialog-hint">Press any key or click Stay to cancel</p>
     </div>
   </div>
 
