@@ -91,8 +91,8 @@ const playerObjects = new Map<string, PlayerObject>();
 // Never allocate a Quaternion inside animate() or updateScene() (Pitfall 6: no per-frame GC).
 const scratchQuat = new THREE.Quaternion();
 
-// SLERP alpha: 0.3 per frame (D-12 — smooth but responsive)
-const SLERP_ALPHA = 0.3;
+// SLERP alpha: 0.5 per frame (raised from 0.3 — reduces perceived lag from packet gaps)
+const SLERP_ALPHA = 0.5;
 
 // Active position display mode (D-13 default: gestureDisplacement)
 let positionMode: 'gesture' | 'deadReckoning' = 'gesture';
@@ -202,12 +202,14 @@ function updateScene(): void {
       let rdz = state.dz - off.dz;
       const mag = Math.sqrt(rdx * rdx + rdy * rdy + rdz * rdz);
       if (mag < POSITION_DEADZONE) { rdx = 0; rdy = 0; rdz = 0; }
-      obj.mesh.position.set(-rdx, -rdz, rdy);
+      // World-frame position (W3C: X=East, Y=North, Z=Up) → Three.js (X=East, Y=Up, Z=South).
+      // Matches scratchQuat.set(qx, qz, -qy, qw) orientation convention.
+      obj.mesh.position.set(rdx, rdz, -rdy);
     } else {
       const rpx = state.px - off.px;
       const rpy = state.py - off.py;
       const rpz = state.pz - off.pz;
-      obj.mesh.position.set(-rpx, -rpz, rpy);
+      obj.mesh.position.set(rpx, rpz, -rpy);
     }
 
     // (c) Touch flash — D-14: live per-frame emissive tracking.

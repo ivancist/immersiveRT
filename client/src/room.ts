@@ -1615,8 +1615,11 @@ async function leaveRoom(): Promise<void> {
     ws = null;
   }
 
-  // Reconnect WS for the next join (user may create/join a new room immediately).
-  connectWS(null);
+  // Restart WT so createRoom/joinRoom can await wtConnectPromise before choosing path.
+  // Without this, the post-leave state has useWt=false and wtConnectPromise=null,
+  // and a fast-click queues join-room with the old myId before WS assigns a new one.
+  wtConnectPromise = connectDesktopWT();
+  wtConnectPromise.then(function(ok) { if (!ok) connectWS(null); });
 }
 
 function showLobbyActions(): void {

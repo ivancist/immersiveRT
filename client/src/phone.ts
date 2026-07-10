@@ -691,8 +691,12 @@ function openChannelToPeer(peerId: string, isRecovery = false): void {
 function updateConnectingUI(): void {
   const chanOpenEl = document.getElementById('chan-open');
   if (chanOpenEl) { chanOpenEl.textContent = String(openChannelCount); }
+  // Transition to view-connecting when all channels close so the phone shows
+  // "waiting for desktop" instead of freezing on view-active.
+  // sensorPipelineRunning is NOT reset here — temporary desktop disconnects
+  // (reload, network drop) should skip recalibration. Only peer-left (intentional
+  // leave) resets it so the next desktop gets fresh calibration.
   if (openChannelCount === 0 && sensorPipelineRunning) {
-    sensorPipelineRunning = false;
     showView('view-connecting');
   }
 }
@@ -747,6 +751,23 @@ function attachTouchListeners(): void {
   document.body.addEventListener('touchmove',   onTouchMove,  { passive: true });
   document.body.addEventListener('touchend',    onTouchEnd,   { passive: true });
   document.body.addEventListener('touchcancel', onTouchEnd,   { passive: true });
+}
+
+// ── World-frame acceleration transform ───────────────────────────────────────
+// Rotate device-frame acceleration to W3C earth frame (X=East, Y=North, Z=Up).
+// primaryQuat represents world→device (W3C ZXY euler convention); applying its
+// conjugate rotates device→world, eliminating rotation-induced gravity leakage
+// that causes the cube to drift when only rotating the phone.
+function rotateDeviceToWorld(vx: number, vy: number, vz: number, q: Quaternion): { x: number; y: number; z: number } {
+  const { w, x: qx, y: qy, z: qz } = q;
+  const tx = 2 * (qz * vy - qy * vz);
+  const ty = 2 * (qx * vz - qz * vx);
+  const tz = 2 * (qy * vx - qx * vy);
+  return {
+    x: vx + w * tx + qz * ty - qy * tz,
+    y: vy + w * ty + qx * tz - qz * tx,
+    z: vz + w * tz + qy * tx - qx * ty,
+  };
 }
 
 // ── Sensor broadcast (Plan 06 / PHONE-04) ────────────────────────────────────
@@ -863,11 +884,17 @@ function startSensorPipeline(zuptThreshold: number, kalmanQ: number): void {
     const ag = e.accelerationIncludingGravity;
     const mag = Math.hypot(safeFloat(ag?.x), safeFloat(ag?.y), safeFloat(ag?.z));
 
-    // ZUPT stillness detection + Kalman position integration.
+    // Rotate device-frame acceleration to W3C world frame (X=East, Y=North, Z=Up)
+    // before Kalman integration. Device-frame integration causes drift whenever the
+    // phone rotates — gravity residuals project differently onto device axes at each
+    // orientation. World-frame integration is rotation-invariant.
+    const wa = rotateDeviceToWorld(ax, ay, az, primaryQuat);
+
+    // ZUPT stillness detection + Kalman position integration (world frame).
     const isStill = zupt.update(mag, Date.now());
-    const rawPx = kalmans[0].predict(ax, dtSec);
-    const rawPy = kalmans[1].predict(ay, dtSec);
-    const rawPz = kalmans[2].predict(az, dtSec);
+    const rawPx = kalmans[0].predict(wa.x, dtSec);
+    const rawPy = kalmans[1].predict(wa.y, dtSec);
+    const rawPz = kalmans[2].predict(wa.z, dtSec);
 
     // Bounded positions — T-05-16: drift cannot grow without limit.
     const clamp = (v: number, lim: number): number => Math.min(lim, Math.max(-lim, v));
@@ -1051,6 +1078,8 @@ async function handleServerPush(msg: SignalingMessage): Promise<void> {
 
     case 'peer-left':
       closePeer((msg.payload && msg.payload['peer_id'] as string) || '');
+      // Intentional desktop leave — reset so next desktop gets fresh calibration.
+      sensorPipelineRunning = false;
       break;
 
     case 'session-ended':
