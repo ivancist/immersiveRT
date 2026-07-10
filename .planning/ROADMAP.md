@@ -17,8 +17,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Signaling, TURN, and Deployment** - WebRTC ICE signaling broker, coturn with host networking, ephemeral TURN credentials, full Docker Compose stack (completed 2026-07-07)
 - [x] **Phase 3: Session and Pairing** - Room join, QR code + short code pairing, slot assignment, reconnect hold, 2-8 player support, room lifecycle events (completed 2026-07-07)
 - [ ] **Phase 4: Phone Bootstrap and WebRTC Channels** - Phone web app delivery, iOS DeviceMotion permission gate, Wake Lock, heartbeat, unreliable data channels to all desktops
-- [ ] **Phase 5: Sensor Fusion and Packet Encoding** - On-device Madgwick, adaptive ZUPT, Kalman dead-reckoning, gesture displacement, touch capture, 40-byte binary packet at 60Hz
-- [ ] **Phase 6: Desktop Receive, Decode, and Rendering** - WebTransport desktop connection, WebRTC peer accept from all phones, binary decode, sequence-drop, target-state store, Three.js slerp loop
+- [x] **Phase 5: Sensor Fusion and Packet Encoding** - On-device Madgwick, adaptive ZUPT, Kalman dead-reckoning, gesture displacement, touch capture, 36-byte binary DataView packet at 60Hz (completed 2026-07-09)
+- [x] **Phase 6: Desktop Receive, Decode, and Rendering** - WebTransport desktop connection, WebRTC peer accept from all phones, binary decode, sequence-drop, target-state store, Three.js slerp loop (completed 2026-07-10)
 - [ ] **Phase 7: SDK Public API** - npm package `immersive-rt`, imperative + event APIs, TypeScript types, latency overlay, drift-honest naming, raw orientation opt-in
 - [ ] **Phase 8: Demo Game** - Multi-player Three.js scene, orientation-driven objects, gesture-launched flick action, latency overlay always visible
 
@@ -130,13 +130,25 @@ Plans:
   4. A phone connected to a 3-desktop room opens three independent unreliable WebRTC data channels (`ordered: false, maxRetransmits: 0`), one per desktop — verified by `RTCPeerConnection.connectionState === 'connected'` for each
   5. After 5 seconds of silence, the server receives a heartbeat; if the phone tab is backgrounded and the heartbeat stops, the server marks the slot as disconnected (not permanently evicted) within 65 seconds
 
-**Plans**: TBD
+**Plans**: 1/3 plans executed
 **UI hint**: yes
+
+Plans:
+**Wave 1**
+
+- [x] 04-01-PLAN.md — Phone bootstrap slice: phone.html six-view shell + nginx /phone serving, iOS permission gate + WebTransport pair, enhanced pair-ack (peers[] + ice_servers) and SlotInfo.phone_client_id (PHONE-01, PHONE-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 04-02-PLAN.md — WebRTC connection slice: phone fan-out of unreliable channels to all desktops, both-sides channel-readiness + player-ready broadcast, minimal desktop answerer (PHONE-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 04-03-PLAN.md — Session durability slice: heartbeat + background miss monitor, Wake Lock + self-heal, phone-state relay, dynamic peer-joined/peer-left mesh (PHONE-06, PHONE-07)
 
 ### Phase 5: Sensor Fusion and Packet Encoding
 
-**Goal**: The phone runs a full on-device sensor pipeline — Madgwick quaternion fusion, adaptive ZUPT dead-reckoning reset, Kalman position estimate — and encodes every output at the maximum device sample rate into a 40-byte binary MessagePack packet transmitted over the unreliable data channel
-**Mode:** mvp
+**Goal**: The phone runs a full on-device sensor pipeline — Madgwick quaternion fusion, adaptive ZUPT dead-reckoning reset, Kalman position estimate — and encodes every output at the maximum device sample rate into a 36-byte binary DataView packet (schema v1) transmitted over the unreliable data channel
 **Depends on**: Phase 4
 **Requirements**: SENS-01, SENS-02, SENS-03, SENS-04, SENS-05, SENS-06, PHONE-04, PHONE-05
 **Success Criteria** (what must be TRUE):
@@ -147,7 +159,15 @@ Plans:
   4. Touch events (tap, button states) appear in every sensor packet alongside orientation and position data
   5. Each sensor packet is <= 45 bytes on the wire (verified with a byte-count logger), sent at >= 55Hz on a mid-range Android device — sequence numbers increment monotonically
 
-**Plans**: TBD
+**Plans**: 7/7 plans complete
+
+- [x] 05-01-PLAN.md
+- [x] 05-02-PLAN.md
+- [x] 05-03-PLAN.md
+- [x] 05-04-PLAN.md
+- [x] 05-05-PLAN.md
+- [x] 05-06-PLAN.md
+- [x] 05-07-PLAN.md
 
 ### Phase 6: Desktop Receive, Decode, and Rendering
 
@@ -163,8 +183,26 @@ Plans:
   4. A Three.js cube rotates smoothly following phone orientation with no visible jitter — the render loop reads from the target-state store and applies SLERP at the configured alpha (default 0.3)
   5. Two phones in the same room each drive a distinct Three.js object — both objects move simultaneously and independently on the same desktop
 
-**Plans**: TBD
+**Plans**: 5/5 plans complete
 **UI hint**: yes
+
+Plans:
+**Wave 1** *(parallel)*
+
+- [x] 06-01-PLAN.md — WebTransport migration in room.ts (WT-first dual-path, WS fallback) (DESK-01)
+- [x] 06-02-PLAN.md — decode.ts + playerStore.ts: binary decode, uint16 seq-drop, finite-guard, per-player target-state store, test-first (DESK-03, DESK-04)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [x] 06-03-PLAN.md — Three.js install (legitimacy gate) + game DOM/CSS shell + empty scene activates on first player-ready (DESK-05)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [x] 06-04-PLAN.md — Per-player boxes + SLERP + receive wiring → phone motion rotates its cube; two phones two cubes (DESK-02, DESK-05)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [x] 06-05-PLAN.md — Precision-eval instrumentation: keyboard toggles, persistent HUD, TAB roster, numeric HUD, touch flash, motion trail (DESK-05)
 
 ### Phase 7: SDK Public API
 
@@ -209,8 +247,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 1. Server and Transport Foundation | 3/3 | Complete    | 2026-07-06 |
 | 2. Signaling, TURN, and Deployment | 4/5 | In Progress|  |
 | 3. Session and Pairing | 4/4 | Complete    | 2026-07-07 |
-| 4. Phone Bootstrap and WebRTC Channels | 0/TBD | Not started | - |
-| 5. Sensor Fusion and Packet Encoding | 0/TBD | Not started | - |
-| 6. Desktop Receive, Decode, and Rendering | 0/TBD | Not started | - |
+| 4. Phone Bootstrap and WebRTC Channels | 1/3 | In Progress|  |
+| 5. Sensor Fusion and Packet Encoding | 7/7 | Complete   | 2026-07-09 |
+| 6. Desktop Receive, Decode, and Rendering | 5/5 | Complete   | 2026-07-10 |
 | 7. SDK Public API | 0/TBD | Not started | - |
 | 8. Demo Game | 0/TBD | Not started | - |

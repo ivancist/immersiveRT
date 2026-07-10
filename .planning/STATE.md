@@ -2,18 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 4
-current_phase_name: Phone Bootstrap and WebRTC Channels
-status: completed
-stopped_at: Phase 3 complete — human checkpoint passed
-last_updated: "2026-07-07T21:16:52.376Z"
-last_activity: 2026-07-07
+current_phase: 06
+current_phase_name: desktop-receive-decode-and-rendering
+status: executing
+stopped_at: Phase 06 complete — phone-disconnect bug fixed
+last_updated: "2026-07-10T17:55:16.325Z"
+last_activity: 2026-07-10
+last_activity_desc: Phase 06 complete — all position axes corrected (quick task)
 progress:
   total_phases: 8
-  completed_phases: 3
-  total_plans: 12
-  completed_plans: 12
-  percent: 38
+  completed_phases: 6
+  total_plans: 27
+  completed_plans: 27
+  percent: 75
 ---
 
 # Project State
@@ -23,16 +24,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** Phone motion feels physically immediate on screen — sub-20ms sensor delivery from phone to desktop, lowest possible latency.
-**Current focus:** Phase 4 — Phone Bootstrap and WebRTC Channels
+**Current focus:** Phase 06 — desktop-receive-decode-and-rendering
 
 ## Current Position
 
-Phase: 4 — Phone Bootstrap and WebRTC Channels
-Plan: Not started
-Status: Phase 03 shipped — release phase-03-complete
-Last activity: 2026-07-07
+Phase: 06 (desktop-receive-decode-and-rendering) — EXECUTING
+Status: Executing Phase 06
+Last activity: 2026-07-10 — Phase 06 execution started
 
-Progress: [███████░░░] 67%
+Progress: [█████████░] 91%
 
 ## Performance Metrics
 
@@ -68,6 +68,19 @@ Progress: [███████░░░] 67%
 | Phase 03 P01 | 16 | 3 tasks | 4 files |
 | Phase 03 P03 | 2 min | 2 tasks | 2 files |
 | Phase 03 P02 | 18 min | 3 tasks | 4 files |
+| Phase 04 P01 | 12 | 3 tasks | 9 files |
+| Phase 05 P01 | 8 | - tasks | - files |
+| Phase 05 P01 | 8 | 3 tasks | 9 files |
+| Phase 05 P02 | 6 | 2 tasks | 4 files |
+| Phase 05 P03 | 2 | 2 tasks | 4 files |
+| Phase 05 P04 | 6 | 2 tasks | 2 files |
+| Phase 05 P05 | 3 | 4 tasks | 4 files |
+| Phase 05 P06 | 8 | 2 tasks | 2 files |
+| Phase 05 P07 | 3 | 3 tasks | 3 files |
+| Phase 06 P02 | 7 | 2 tasks | 5 files |
+| Phase 06 P03 | 15 | 3 tasks | 5 files |
+| Phase 06 P04 | 61 | 3 tasks | 2 files |
+| Phase 06 P06-05 | 240 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -99,6 +112,35 @@ Recent decisions affecting current work:
 - [Phase ?]: userid=anonymous placeholder for Phase 2; Phase 4 supplies real client session ID
 - [Phase ?]: Arc<RoomRegistry> only threaded through relay functions — base_url and pairing_secret stored inside registry from Plan 03-01 constructor
 - [Phase ?]: Startup log includes base_url but not pairing_token_secret value — T-03-07 mitigation enforced at main.rs level
+- [Phase ?]: Phase 4 Plan 01: RoomRegistry.turn_shared_secret added — threaded from main.rs so handle_pair can generate TURN credentials at pair time
+- [Phase ?]: Phase 4 Plan 01: nginx try_files $uri $uri.html added — /phone resolves to phone.html without serving index.html (RESEARCH Pitfall 6)
+- [Phase ?]: Phase 4 Plan 01: listenForServerPushes started before register/pair — incomingBidirectionalStreams must be consumed immediately after transport.ready (RESEARCH Pitfall 2)
+- [Phase ?]: Phase 5 Plan 01: Vite 8.1.4 as bundler (D-01) to unlock npm ecosystem for ahrs, float16, future Three.js
+- [Phase ?]: Phase 5 Plan 01: vite.config.ts single room entry only; phone entry added in Plan 02
+- [Phase ?]: Phase 5 Plan 02: export {} added to phone.ts and room.ts — makes them ES modules, prevents global-scope collision when multiple TS files lack imports
+- [Phase ?]: Phase 5 Plan 02: e.acceleration (standard spec) replaces non-standard e.linearAcceleration — identical behavior, strict DOM type compliance
+- Phase 5 Plan 03: DataView + @petamoriken/float16 setFloat16 used for packet encoding — NOT msgpackr (no float16 type in MessagePack, Pitfall 4)
+- Phase 5 Plan 03: _packetBuf allocated once at module scope — callers must .slice() before WebRTC send (Pitfall 5 no per-tick GC)
+- Phase 5 Plan 03: computeCalibration is pure function; runCalibration is thin devicemotion wrapper — calibration math stays unit-testable in jsdom (D-08)
+- Phase 5 Plan 05: ZUPTDetector NaN guard skips push but still evicts stale entries — bounded window preserved on bad samples (T-05-01)
+- Phase 5 Plan 05: Kalman1D resetVelocity uses Kalman gain K=P/(P+R) to shrink P proportionally — not a hard reset to zero
+- Phase 5 Plan 05: driftConfidence=max(0,1-min(1,P)) naturally in [0,1] without explicit clamping branches
+- [Phase ?]: Phase 5 Plan 06: cast encodePacket return to Uint8Array<ArrayBuffer> for RTCDataChannel.send TS 5.6+ compatibility
+- [Phase ?]: Phase 5 Plan 06: requestWakeLock + startHeartbeat moved to runCalibration callback — fire when active view shows, not before calibration
+- [Phase ?]: Phase 5 Plan 07: POSITION_MAX=100m bounds Kalman drift
+- [Phase ?]: Phase 5 Plan 07: attachTouchListeners idempotent behind touchListenersAttached + named handlers — no listener leak on session reconnect (T-05-17)
+- [Phase ?]: .planning/phases/06-desktop-receive-decode-and-rendering/06-01-SUMMARY.md
+- [Phase ?]: .planning/phases/06-desktop-receive-decode-and-rendering/06-01-SUMMARY.md
+- Phase 6 Plan 02: decode.ts imports SCHEMA_VERSION + BUF_SIZE from ./encode — single source of truth for byte offsets (never redefines)
+- Phase 6 Plan 02: RFC 1982 half-distance isNewerSeq — diff = (newSeq - lastSeq) & 0xFFFF; accept if diff > 0 && diff <= 32767 (handles 65535→0 wraparound)
+- Phase 6 Plan 02: PlayerState stores plain JS numbers, no THREE types — decouples store from WebGL context for jsdom-testable unit testing
+- [Phase ?]: Phase 6 Plan 04: THREE.Quaternion.set(x,y,z,w) — w is scalar; pass (qx,qy,qz,qw) not (qw,qx,qy,qz)
+- [Phase ?]: Phase 6 Plan 04: console.log (not console.debug) for decode drop messages — Chrome filters debug at Info level
+- [Phase ?]: Phase 6 Plan 04: Namespace imports (import * as decode) to keep grep counts at exactly 1 per function name in room.ts
+- [Phase ?]: leaveRoom async+await: sendWtMessage must complete before transport.close() — sync try/catch cannot catch async rejections
+- [Phase ?]: view-lobby hidden=true by default: module scripts deferred, lobby must be hidden before first paint to prevent FOUC on /room/ reload
+- [Phase ?]: sensorPipelineRunning flag in phone.ts: server replays player-ready on every desktop reconnect; phone must skip recalibration when already active
+- [Phase ?]: Per-frame emissive touch flash: live state.touchActive check in updateScene rAF loop — no setTimeout, no timers, no race conditions
 
 ### Pending Todos
 
@@ -116,6 +158,11 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260707-f1x | Fix cert permissions for cold start | 2026-07-07 | 880ea1b | [260707-f1x-fix-cert-permissions-for-cold-start](./quick/260707-f1x-fix-cert-permissions-for-cold-start/) |
+| 260710-fix-phone-disconnect-on-leave | Phone transitions to view-connecting when desktop leaves room | 2026-07-10 | 268bf50 | [260710-fix-phone-disconnect-on-leave](./quick/260710-fix-phone-disconnect-on-leave/) |
+| 260710-w83 | Fix inverted position axes: negate all three components in both position paths | 2026-07-10 | b38e0e5 | [260710-w83-fix-inverted-position-axes-negate-all-th](./quick/260710-w83-fix-inverted-position-axes-negate-all-th/) |
+| 260710-wb4 | Prevent screen rotation: CSS landscape overlay + orientation lock in user gesture | 2026-07-10 | 00eb30d | [260710-wb4-add-landscape-lock-overlay-to-phone-html](./quick/260710-wb4-add-landscape-lock-overlay-to-phone-html/) |
+| 260710-whi | Four phone UX fixes: landscape CSS rotation, fullscreen, peer-left reason, view-ended on leave | 2026-07-10 | 8022055 | [260710-whi-four-phone-ux-fixes-css-90deg-landscape-](./quick/260710-whi-four-phone-ux-fixes-css-90deg-landscape-/) |
+| 260710-wt-race-and-fullscreen-hint | WT close race fix + fullscreen button → rotation hint | 2026-07-10 | 3e26c64 | [260710-wt-race-and-fullscreen-hint](./quick/260710-wt-race-and-fullscreen-hint/) |
 
 ## Deferred Items
 
@@ -125,6 +172,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-07
-Stopped at: Phase 3 complete, verified (7/7 UAT passed, threats_open: 0), transitioned to Phase 4
-Resume file: none
+Last session: 2026-07-10T17:54:58.210Z
+Stopped at: Phase 06 UI-SPEC approved
+Resume file: .planning/phases/06-desktop-receive-decode-and-rendering/06-UI-SPEC.md

@@ -156,6 +156,7 @@ where
             // Before registration, inbound messages that are not "register" type are dropped.
             let mut my_id: Option<String> = None;
             let mut broker_rx: Option<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>> = None;
+            let mut my_alive: Option<std::sync::Arc<std::sync::atomic::AtomicBool>> = None;
 
             loop {
                 tokio::select! {
@@ -193,22 +194,14 @@ where
                             }
                         };
                         if envelope.msg_type == "register" {
-                            // Register with broker; subsequent inbound messages route via broker.
+                            // register() is infallible — replaces any stale entry from a
+                            // prior dropped connection and signals it via the alive flag.
                             let id = envelope.from.clone();
-                            match broker.register(id.clone()) {
-                                Ok(rx) => {
-                                    my_id = Some(id.clone());
-                                    broker_rx = Some(rx);
-                                    tracing::info!(client_id = %id, "WS client registered from {addr}");
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        client_id = %id,
-                                        "WS registration rejected from {addr}: {e}, closing connection"
-                                    );
-                                    break;
-                                }
-                            }
+                            let (rx, alive) = broker.register(id.clone());
+                            my_id = Some(id.clone());
+                            broker_rx = Some(rx);
+                            my_alive = Some(alive);
+                            tracing::info!(client_id = %id, "WS client registered from {addr}");
                         } else if my_id.is_none() {
                             // Cannot route without an ID — drop and warn.
                             tracing::warn!(
@@ -253,7 +246,7 @@ where
                                 }
                                 "pair" => {
                                     let ack = room_registry
-                                        .handle_pair(&envelope.payload, &broker)
+                                        .handle_pair(&envelope.from, &envelope.payload, &broker)
                                         .await;
                                     let ack_text = serde_json::to_string(&ack)
                                         .unwrap_or_else(|e| {
@@ -268,6 +261,32 @@ where
                                     // prevents the FIN-before-data race that triggers hold timer.
                                     let ack = r#"{"type":"leave-ack"}"#;
                                     let _ = write.send(Message::Text(ack.into())).await;
+                                }
+                                "rtc-channel-ready" => {
+                                    room_registry
+                                        .handle_rtc_channel_ready(
+                                            &envelope.from,
+                                            &envelope.payload,
+                                            &broker,
+                                        )
+                                        .await;
+                                    // Fire-and-forget: no response to the desktop.
+                                }
+                                "heartbeat" => {
+                                    // Update last_heartbeat for this phone (D-19, PHONE-06).
+                                    room_registry.handle_heartbeat(&envelope.from);
+                                    // No ack body for heartbeat.
+                                }
+                                "phone-state" => {
+                                    // Relay phone state transitions to all room desktops (D-17/D-18).
+                                    room_registry
+                                        .handle_phone_state(
+                                            &envelope.from,
+                                            &envelope.payload,
+                                            &broker,
+                                        )
+                                        .await;
+                                    // Fire-and-forget: no response to the phone.
                                 }
                                 _ => {
                                     // Existing broker routing (offer, answer, ice-candidate, etc.)
@@ -301,10 +320,21 @@ where
                     } => {
                         match maybe_payload {
                             Some(payload) => {
-                                let text = String::from_utf8_lossy(&payload).into_owned();
-                                if write.send(Message::Text(text.into())).await.is_err() {
-                                    tracing::warn!("WS send failed to {addr}, closing connection");
-                                    break;
+                                // WR-08: use from_utf8 instead of from_utf8_lossy to detect
+                                // non-UTF-8 broker payloads explicitly. Current payloads are
+                                // always serde_json output (valid UTF-8), but future code paths
+                                // pushing binary data would be silently corrupted by lossy.
+                                match String::from_utf8(payload) {
+                                    Ok(text) => {
+                                        if write.send(Message::Text(text.into())).await.is_err() {
+                                            tracing::warn!("WS send failed to {addr}, closing connection");
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("WS broker payload is not valid UTF-8, dropping: {e}");
+                                        continue;
+                                    }
                                 }
                             }
                             None => {
@@ -320,11 +350,22 @@ where
             }
             tracing::debug!("WS connection from {addr} closed");
             if let Some(id) = &my_id {
-                broker.unregister(id);
-                tracing::info!(client_id = %id, "WS client unregistered");
-                // Lifecycle event: mark slot Disconnected, broadcast player-disconnected,
-                // spawn hold timer (D-16, D-19, SESS-06). Per D-09: called after broker.unregister.
-                room_registry.on_client_disconnect(id, &broker).await;
+                // Only clean up if this relay task still owns the broker entry.
+                // If alive is false, a newer connection replaced us — that connection owns cleanup.
+                let is_owner = my_alive
+                    .as_ref()
+                    .map_or(false, |a| a.load(std::sync::atomic::Ordering::SeqCst));
+                if is_owner {
+                    broker.unregister(id);
+                    tracing::info!(client_id = %id, "WS client unregistered");
+                    if room_registry.is_phone_client(id) {
+                        tracing::info!(client_id = %id, "WS relay exited for phone — heartbeat monitor will handle cleanup");
+                    } else {
+                        room_registry.on_client_disconnect(id, &broker).await;
+                    }
+                } else {
+                    tracing::info!(client_id = %id, "WS relay superseded by newer connection, skipping disconnect");
+                }
             }
         }
         Err(e) => {

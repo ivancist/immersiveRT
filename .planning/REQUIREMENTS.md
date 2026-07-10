@@ -26,30 +26,30 @@
 
 ### Phone Client
 
-- [ ] **PHONE-01**: Phone web app is accessible via QR scan with no app install required
-- [ ] **PHONE-02**: Phone shows a "Grant Motion Access" button as first interaction on iOS 13+ (required user gesture before DeviceMotionEvent permission prompt)
+- [x] **PHONE-01**: Phone web app is accessible via QR scan with no app install required
+- [x] **PHONE-02**: Phone shows a "Grant Motion Access" button as first interaction on iOS 13+ (required user gesture before DeviceMotionEvent permission prompt)
 - [ ] **PHONE-03**: Phone establishes WebRTC P2P unreliable data channels to ALL desktops in the room — one to its paired desktop (primary) and one to each other player's desktop — so every desktop receives sensor data directly without relay
-- [ ] **PHONE-04**: Phone sends sensor packets at the maximum available device rate (~60–100Hz) over the unreliable data channel
-- [ ] **PHONE-05**: Phone encodes each sensor packet as compact binary (~40 bytes) using MessagePack — includes sequence number, timestamp, orientation quaternion, gesture displacement, dead-reckoning position, touch events, drift confidence
+- [x] **PHONE-04**: Phone sends sensor packets at the maximum available device rate (~60–100Hz) over the unreliable data channel
+- [x] **PHONE-05**: Phone encodes each sensor packet as compact binary (~40 bytes) using MessagePack — includes sequence number, timestamp, orientation quaternion, gesture displacement, dead-reckoning position, touch events, drift confidence
 - [ ] **PHONE-06**: Phone sends a heartbeat every 5 seconds to prevent slot eviction and detect connection loss
 - [ ] **PHONE-07**: Phone activates Wake Lock API to prevent screen lock from killing the sensor stream
 
 ### Sensor Fusion (on-device)
 
-- [ ] **SENS-01**: Phone runs Madgwick filter on-device to produce a stable orientation quaternion from gyroscope + accelerometer + magnetometer — drift-free
-- [ ] **SENS-02**: Madgwick beta parameter is runtime-configurable; defaults to 0.1, ramps to 0.2–0.3 at cold start and ramps back down after convergence
-- [ ] **SENS-03**: Phone runs ZUPT (Zero-Velocity Update) with adaptive variance + 300ms duration threshold — detects stationary moments and resets velocity accumulator to kill drift
-- [ ] **SENS-04**: Phone runs Kalman filter over linear acceleration to produce a dead-reckoning position estimate with a `driftConfidence` scalar (0–1)
-- [ ] **SENS-05**: Gesture displacement: ZUPT gates a per-action position delta window — each swing/throw/flick produces a discrete `gestureDisplacement` vector reset between actions
-- [ ] **SENS-06**: Touch input: phone captures tap events and configurable on-screen button states, included in each sensor packet
+- [x] **SENS-01**: Phone runs Madgwick filter on-device to produce a stable orientation quaternion from gyroscope + accelerometer + magnetometer — drift-free
+- [x] **SENS-02**: Madgwick beta parameter is runtime-configurable; defaults to 0.1, ramps to 0.2–0.3 at cold start and ramps back down after convergence
+- [x] **SENS-03**: Phone runs ZUPT (Zero-Velocity Update) with adaptive variance + 300ms duration threshold — detects stationary moments and resets velocity accumulator to kill drift
+- [x] **SENS-04**: Phone runs Kalman filter over linear acceleration to produce a dead-reckoning position estimate with a `driftConfidence` scalar (0–1)
+- [x] **SENS-05**: Gesture displacement: ZUPT gates a per-action position delta window — each swing/throw/flick produces a discrete `gestureDisplacement` vector reset between actions
+- [x] **SENS-06**: Touch input: phone captures tap events and configurable on-screen button states, included in each sensor packet
 
 ### Desktop Client
 
-- [ ] **DESK-01**: Desktop connects to the server via WebTransport (persistent connection for signaling and game state)
-- [ ] **DESK-02**: Desktop establishes a WebRTC P2P unreliable data channel to its paired phone (primary sensor input) and accepts WebRTC connections from all other players' phones (cross-player sensor input) — no desktop-to-desktop relay
-- [ ] **DESK-03**: Desktop decodes incoming binary sensor packets from all connected phones, drops out-of-order packets via uint16 sequence number comparison per-sender
-- [ ] **DESK-04**: Desktop maintains a per-player target-state store (latest orientation, gestureDisplacement, deadReckoningPosition, touch) updated on every packet receipt
-- [ ] **DESK-05**: Desktop applies SLERP interpolation on orientation quaternions in the Three.js render loop (default alpha 0.2–0.4, configurable)
+- [x] **DESK-01**: Desktop connects to the server via WebTransport (persistent connection for signaling and game state)
+- [x] **DESK-02**: Desktop establishes a WebRTC P2P unreliable data channel to its paired phone (primary sensor input) and accepts WebRTC connections from all other players' phones (cross-player sensor input) — no desktop-to-desktop relay
+- [x] **DESK-03**: Desktop decodes incoming binary sensor packets from all connected phones, drops out-of-order packets via uint16 sequence number comparison per-sender
+- [x] **DESK-04**: Desktop maintains a per-player target-state store (latest orientation, gestureDisplacement, deadReckoningPosition, touch) updated on every packet receipt
+- [x] **DESK-05**: Desktop applies SLERP interpolation on orientation quaternions in the Three.js render loop (default alpha 0.2–0.4, configurable)
 
 ### SDK
 
@@ -123,24 +123,24 @@
 | SESS-04 | Phase 3 | Complete |
 | SESS-05 | Phase 3 | Complete |
 | SESS-06 | Phase 3 | Complete |
-| PHONE-01 | Phase 4 | Pending |
-| PHONE-02 | Phase 4 | Pending |
+| PHONE-01 | Phase 4 | Complete |
+| PHONE-02 | Phase 4 | Complete |
 | PHONE-03 | Phase 4 | Pending |
 | PHONE-06 | Phase 4 | Pending |
 | PHONE-07 | Phase 4 | Pending |
-| SENS-01 | Phase 5 | Pending |
-| SENS-02 | Phase 5 | Pending |
-| SENS-03 | Phase 5 | Pending |
-| SENS-04 | Phase 5 | Pending |
-| SENS-05 | Phase 5 | Pending |
-| SENS-06 | Phase 5 | Pending |
-| PHONE-04 | Phase 5 | Pending |
-| PHONE-05 | Phase 5 | Pending |
-| DESK-01 | Phase 6 | Pending |
-| DESK-02 | Phase 6 | Pending |
-| DESK-03 | Phase 6 | Pending |
-| DESK-04 | Phase 6 | Pending |
-| DESK-05 | Phase 6 | Pending |
+| SENS-01 | Phase 5 | Complete |
+| SENS-02 | Phase 5 | Complete |
+| SENS-03 | Phase 5 | Complete |
+| SENS-04 | Phase 5 | Complete |
+| SENS-05 | Phase 5 | Complete |
+| SENS-06 | Phase 5 | Complete |
+| PHONE-04 | Phase 5 | Complete |
+| PHONE-05 | Phase 5 | Complete |
+| DESK-01 | Phase 6 | Complete |
+| DESK-02 | Phase 6 | Complete |
+| DESK-03 | Phase 6 | Complete |
+| DESK-04 | Phase 6 | Complete |
+| DESK-05 | Phase 6 | Complete |
 | SDK-01 | Phase 7 | Pending |
 | SDK-02 | Phase 7 | Pending |
 | SDK-03 | Phase 7 | Pending |

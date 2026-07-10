@@ -428,14 +428,141 @@
        Hidden utility
     ────────────────────────────────────────── */
     [hidden] { display: none !important; }
+
+    /* ──────────────────────────────────────────
+       Game View — Three.js canvas + HUD + overlays
+       (UI-SPEC Component Inventory, Phase 6)
+    ────────────────────────────────────────── */
+    #game-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: none;
+    }
+    #game-canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #game-hud {
+      position: fixed;
+      top: 12px; left: 16px;
+      z-index: 10;
+      color: var(--color-text-primary);
+      font-family: "Courier New", Courier, monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      pointer-events: none;
+      display: none;
+    }
+    #game-hud-players {
+      position: fixed;
+      bottom: 16px; left: 16px;
+      z-index: 10;
+      font-family: "Courier New", Courier, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      pointer-events: none;
+      white-space: pre; /* required: textContent uses \n for multiline diagnostic blocks (D-15) */
+      color: var(--color-text-secondary);
+    }
+    #game-tab-overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      z-index: 20;
+      display: none;
+      padding: 32px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--color-text-primary);
+      pointer-events: none;
+    }
+    .player-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--color-text-primary);
+      text-shadow: 0 1px 2px #000;
+      pointer-events: none;
+    }
+    /* ── Esc leave-confirmation overlay (Fix 2) ── */
+    #game-esc-overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.72);
+      z-index: 30;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--color-text-primary);
+    }
+    #esc-dialog {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      padding: 32px 40px;
+      text-align: center;
+      min-width: 300px;
+    }
+    #esc-dialog-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 4px;
+    }
+    #esc-dialog-body {
+      font-size: 14px;
+      color: var(--color-text-secondary);
+      margin: 6px 0 0;
+    }
+    #esc-dialog-hint {
+      font-size: 12px;
+      color: var(--color-text-secondary);
+      margin: 14px 0 0;
+    }
+    #esc-buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-top: 20px;
+    }
+    #btn-esc-leave {
+      background: #c0392b;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 10px 22px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #btn-esc-leave:hover { background: #e74c3c; }
+    #btn-esc-stay {
+      background: transparent;
+      color: var(--color-text-primary);
+      border: 1px solid var(--color-border);
+      border-radius: 4px;
+      padding: 10px 22px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #btn-esc-stay:hover { background: rgba(255,255,255,0.07); }
   </style>
 </head>
 <body>
 
   <!-- ──────────────────────────────────────────
        View 1: Lobby  (/ path)
+       hidden=true by default: prevents a flash of the lobby on /room/ reload
+       when the prPhones_ sentinel is present and showGameView() is called
+       synchronously before the first paint. initDesktopPage() calls
+       showView('view-lobby') explicitly for all non-room paths.
   ────────────────────────────────────────── -->
-  <div id="view-lobby">
+  <div id="view-lobby" hidden>
     <div class="card lobby-card">
       <h1>ImmersiveRT</h1>
       <p class="subtitle">Create or join a room to get started.</p>
@@ -573,6 +700,44 @@
     </div>
   </div>
 
-  <script src="/room.js"></script>
+  <!-- ──────────────────────────────────────────
+       Game View — full-viewport 3D canvas + overlays
+       (hidden by default; activated by showGameView() on first player-ready — D-04, D-05)
+  ────────────────────────────────────────── -->
+  <div id="game-container">
+    <canvas id="game-canvas"></canvas>
+  </div>
+
+  <!-- Persistent minimal HUD (D-06) — hidden until showGameView() -->
+  <div id="game-hud">
+    <div id="hud-slots">0/0 connected</div>
+    <div id="hud-mode">pos: gesture&nbsp;&nbsp;[P to cycle]</div>
+    <div id="hud-keys">G:on&nbsp;&nbsp;A:on&nbsp;&nbsp;H:on&nbsp;&nbsp;T:off&nbsp;&nbsp;R:reset&nbsp;&nbsp;Esc:menu</div>
+  </div>
+
+  <!-- Per-player numeric HUD panel (D-15, H key toggle) -->
+  <div id="game-hud-players"></div>
+
+  <!-- TAB-held roster overlay (D-07) -->
+  <div id="game-tab-overlay">
+    <div id="tab-roster">
+      <p class="size-heading">Players</p>
+    </div>
+  </div>
+
+  <!-- Esc leave-confirmation overlay — pointer-events on by default -->
+  <div id="game-esc-overlay">
+    <div id="esc-dialog">
+      <p id="esc-dialog-title">Leave Room?</p>
+      <p id="esc-dialog-body">Your phone connection will be closed.</p>
+      <div id="esc-buttons">
+        <button id="btn-esc-leave">Leave Room</button>
+        <button id="btn-esc-stay">Stay</button>
+      </div>
+      <p id="esc-dialog-hint">Press any key or click Stay to cancel</p>
+    </div>
+  </div>
+
+  <script type="module" src="./src/room.ts"></script>
 </body>
 </html>

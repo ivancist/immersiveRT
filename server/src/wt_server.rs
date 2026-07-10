@@ -129,16 +129,9 @@ async fn handle_wt_connection(
     };
 
     let my_id = register_env.from.clone();
-    let mut broker_rx = match broker.register(my_id.clone()) {
-        Ok(rx) => rx,
-        Err(e) => {
-            tracing::warn!(
-                client_id = %my_id,
-                "WT registration rejected: {e}, closing connection"
-            );
-            return Ok(());
-        }
-    };
+    // register() is infallible — replaces any stale entry from a prior dropped connection
+    // and signals it via the alive flag so its cleanup task skips on_client_disconnect.
+    let (mut broker_rx, my_alive) = broker.register(my_id.clone());
     tracing::info!(client_id = %my_id, "WT client registered");
 
     // Main relay loop: race inbound streams from the client against outbound messages
@@ -230,7 +223,7 @@ async fn handle_wt_connection(
                             }
                             "pair" => {
                                 let ack = room_registry
-                                    .handle_pair(&envelope.payload, &broker)
+                                    .handle_pair(&envelope.from, &envelope.payload, &broker)
                                     .await;
                                 let ack_bytes = serde_json::to_vec(&ack).unwrap_or_default();
                                 let _ = send.write_all(&ack_bytes).await;
@@ -238,6 +231,29 @@ async fn handle_wt_connection(
                             }
                             "leave-room" => {
                                 room_registry.handle_leave(&envelope.from, &broker).await;
+                                let _ = send.finish().await;
+                            }
+                            "rtc-channel-ready" => {
+                                room_registry
+                                    .handle_rtc_channel_ready(
+                                        &envelope.from,
+                                        &envelope.payload,
+                                        &broker,
+                                    )
+                                    .await;
+                                let _ = send.finish().await;
+                            }
+                            "heartbeat" => {
+                                // Update last_heartbeat for this phone (D-19, PHONE-06).
+                                // Synchronous O(1) update — no async boundary needed.
+                                room_registry.handle_heartbeat(&envelope.from);
+                                let _ = send.finish().await;
+                            }
+                            "phone-state" => {
+                                // Relay phone state transitions to all room desktops (D-17/D-18).
+                                room_registry
+                                    .handle_phone_state(&envelope.from, &envelope.payload, &broker)
+                                    .await;
                                 let _ = send.finish().await;
                             }
                             _ => {
@@ -329,10 +345,22 @@ async fn handle_wt_connection(
         }
     }
 
-    broker.unregister(&my_id);
-    tracing::info!(client_id = %my_id, "WT client unregistered");
-    // Lifecycle event: mark slot Disconnected, broadcast player-disconnected,
-    // spawn hold timer (D-16, D-19, SESS-06). Per D-09: called after broker.unregister.
-    room_registry.on_client_disconnect(&my_id, &broker).await;
+    // Only clean up if this relay task still owns the broker entry.
+    // If alive is false, a newer connection replaced us — that connection owns cleanup.
+    if my_alive.load(std::sync::atomic::Ordering::SeqCst) {
+        broker.unregister(&my_id);
+        tracing::info!(client_id = %my_id, "WT client unregistered");
+        // Phone clients: heartbeat monitor owns slot lifecycle (fires after 65s of silence).
+        // Calling on_client_disconnect here would start a 60s hold timer from the QUIC
+        // drop instant, racing the heartbeat grace window and causing premature slot release
+        // (invalid_token on the next reconnect attempt).
+        if room_registry.is_phone_client(&my_id) {
+            tracing::info!(client_id = %my_id, "WT relay exited for phone — heartbeat monitor will handle cleanup");
+        } else {
+            room_registry.on_client_disconnect(&my_id, &broker).await;
+        }
+    } else {
+        tracing::info!(client_id = %my_id, "WT relay superseded by newer connection, skipping disconnect");
+    }
     Ok(())
 }

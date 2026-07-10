@@ -9,6 +9,31 @@ mod ws_server;
 use std::sync::Arc;
 use axum::{extract::State, routing::get, Json, Router};
 
+/// Spawn a background task that periodically scans for phones that have gone
+/// silent (no heartbeat within `timeout_secs`) and marks their slots Disconnected,
+/// broadcasting a `phone-state:heartbeat-miss` to room desktops (D-19, PHONE-06).
+///
+/// The monitor runs every `interval_secs` seconds. Both values are configurable via
+/// `HEARTBEAT_MONITOR_INTERVAL_SECS` and `HEARTBEAT_TIMEOUT_SECS` env vars.
+fn spawn_heartbeat_monitor(
+    registry: Arc<room_registry::RoomRegistry>,
+    broker: Arc<broker::SignalingBroker>,
+    timeout_secs: u64,
+    interval_secs: u64,
+) {
+    tokio::spawn(async move {
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+        let interval = std::time::Duration::from_secs(interval_secs);
+        loop {
+            tokio::time::sleep(interval).await;
+            let missing = registry.phones_missing_heartbeat(timeout);
+            for (room_code, slot_id, _username, _phone_id) in missing {
+                registry.handle_heartbeat_miss(&room_code, slot_id, &broker).await;
+            }
+        }
+    });
+}
+
 /// Shared application state injected into the axum HTTP handler.
 struct AppState {
     turn_shared_secret: String,
@@ -36,7 +61,9 @@ async fn turn_creds_handler(
                 "Missing Authorization header".into(),
             )
         })?;
-    if token != format!("Bearer {}", state.api_token) {
+    use subtle::ConstantTimeEq;
+    let expected = format!("Bearer {}", state.api_token);
+    if expected.as_bytes().ct_eq(token.as_bytes()).unwrap_u8() == 0 {
         return Err((
             axum::http::StatusCode::UNAUTHORIZED,
             "Invalid token".into(),
@@ -111,6 +138,23 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "8081".into())
         .parse()
         .map_err(|e| anyhow::anyhow!("HTTP_PORT must be a valid u16 port number: {e}"))?;
+    // HEARTBEAT_TIMEOUT_SECS: seconds of silence before a phone slot is marked Disconnected (D-19).
+    let heartbeat_timeout_secs: u64 = std::env::var("HEARTBEAT_TIMEOUT_SECS")
+        .unwrap_or_else(|_| "65".into())
+        .parse()
+        .map_err(|e| anyhow::anyhow!("HEARTBEAT_TIMEOUT_SECS must be a valid u64 (seconds): {e}"))?;
+    // HEARTBEAT_MONITOR_INTERVAL_SECS: how often the monitor task wakes to check for stale phones.
+    let heartbeat_interval_secs: u64 = std::env::var("HEARTBEAT_MONITOR_INTERVAL_SECS")
+        .unwrap_or_else(|_| "10".into())
+        .parse()
+        .map_err(|e| anyhow::anyhow!("HEARTBEAT_MONITOR_INTERVAL_SECS must be a valid u64 (seconds): {e}"))?;
+    // WR-05: TURN_CREDENTIAL_TTL_SECS — TTL for ephemeral TURN credentials generated at pair time.
+    // Must be longer than pairing_ttl_secs to ensure credentials are still valid when a second
+    // desktop joins after the initial pairing window. Default 3600 s (1 hour).
+    let turn_credential_ttl_secs: u64 = std::env::var("TURN_CREDENTIAL_TTL_SECS")
+        .unwrap_or_else(|_| "3600".into())
+        .parse()
+        .map_err(|e| anyhow::anyhow!("TURN_CREDENTIAL_TTL_SECS must be a valid u64 (seconds): {e}"))?;
 
     // T-03-07: log base_url (public, safe) but NOT pairing_token_secret value.
     tracing::info!(
@@ -131,12 +175,38 @@ async fn main() -> anyhow::Result<()> {
     // Room registry — manages room lifecycle, slot assignment, hold timers,
     // pairing token generation, and reconnect token lookup (SESS-01..SESS-06).
     // Constructed here and cloned into both WT and WS listeners.
+    // turn_shared_secret is threaded here so handle_pair can generate ephemeral
+    // TURN credentials without an extra HTTP call (INFRA-04, D-06, Phase 4).
     let room_registry = Arc::new(room_registry::RoomRegistry::new(
         pairing_token_secret,
+        turn_shared_secret.clone(),
         base_url,
         hold_ttl_secs,
         pairing_ttl_secs,
+        turn_credential_ttl_secs,
     ));
+
+    // Start the heartbeat monitor before the server accept loops (D-19, PHONE-06).
+    spawn_heartbeat_monitor(
+        room_registry.clone(),
+        broker.clone(),
+        heartbeat_timeout_secs,
+        heartbeat_interval_secs,
+    );
+
+    // WR-06: Periodically evict expired consumed pairing tokens to prevent unbounded growth.
+    // Sweep every 5 minutes — tokens expire at pairing_ttl_secs (default 90 s), so a 5-minute
+    // sweep keeps the map bounded to at most ~5× the per-TTL join rate.
+    {
+        let registry_for_sweep = room_registry.clone();
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(300); // 5 minutes
+            loop {
+                tokio::time::sleep(interval).await;
+                registry_for_sweep.sweep_expired_pairing_tokens();
+            }
+        });
+    }
 
     // Axum HTTP state — Arc-wrapped so the handler can clone the secret reference.
     let app_state = Arc::new(AppState { turn_shared_secret, api_token });

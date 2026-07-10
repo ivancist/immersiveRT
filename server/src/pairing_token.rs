@@ -11,12 +11,16 @@ type HmacSha256 = Hmac<Sha256>;
 
 /// Single-use tracking store for HMAC pairing tokens.
 ///
-/// Wraps an `Arc<DashMap<String, ()>>` so that `Clone` shares the same
-/// underlying map across all handles — matching the broker/registry
+/// Wraps an `Arc<DashMap<String, u64>>` (token → expiry_unix) so that `Clone` shares
+/// the same underlying map across all handles — matching the broker/registry
 /// Arc<DashMap> clone pattern (PATTERNS.md §pairing_token).
+///
+/// WR-06: expiry is stored alongside the token so `sweep_expired` can evict entries
+/// whose TTL has elapsed, preventing unbounded growth on long-running servers.
 #[derive(Clone)]
 pub struct PairingTokenStore {
-    used_tokens: Arc<DashMap<String, ()>>,
+    /// token → expiry_unix_secs (stored to enable expiry-based sweep, WR-06)
+    used_tokens: Arc<DashMap<String, u64>>,
 }
 
 impl PairingTokenStore {
@@ -63,16 +67,30 @@ impl PairingTokenStore {
             return None;
         }
 
-        // Atomic check-and-mark: Vacant → insert + return Some; Occupied → return None
-        // Per D-14: single-use tracking via DashMap entry (T-03-01 mitigation)
+        // Atomic check-and-mark: Vacant → insert expiry + return Some; Occupied → return None
+        // Per D-14: single-use tracking via DashMap entry (T-03-01 mitigation).
+        // WR-06: store expiry so sweep_expired can evict stale entries.
         use dashmap::mapref::entry::Entry;
         match self.used_tokens.entry(token.to_string()) {
             Entry::Vacant(e) => {
-                e.insert(());
+                e.insert(expiry);
                 Some((room_code, slot_id))
             }
             Entry::Occupied(_) => None,
         }
+    }
+
+    /// Evict consumed tokens whose expiry timestamp has passed.
+    ///
+    /// WR-06: call this from a background task every few minutes to prevent
+    /// `used_tokens` from growing unboundedly on long-running servers.
+    /// Safe to call concurrently — DashMap `retain` is shard-locked internally.
+    pub fn sweep_expired(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.used_tokens.retain(|_, exp| *exp > now);
     }
 }
 

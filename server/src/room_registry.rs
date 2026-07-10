@@ -1,5 +1,6 @@
 use crate::broker::SignalingBroker;
 use crate::pairing_token::{generate_pairing_token, generate_reconnect_token, PairingTokenStore};
+use crate::turn_creds::generate_turn_credentials;
 use dashmap::DashMap;
 use std::{
     sync::Arc,
@@ -30,6 +31,12 @@ pub struct SlotInfo {
     pub username: String,
     pub status: SlotStatus,
     pub reconnect_token: String,
+    /// Set at pair time — the phone's registered client_id.
+    /// Enables server→phone routing (route_to_phone helper).
+    pub phone_client_id: Option<String>,
+    /// Updated on each heartbeat message from the phone (Plan 03).
+    #[allow(dead_code)] // Activated in Plan 03 (handle_heartbeat + phones_missing_heartbeat).
+    pub last_heartbeat: Option<std::time::Instant>,
 }
 
 /// A room: fixed 8-slot array, indexed by slot_id - 1.
@@ -73,21 +80,37 @@ pub struct RoomRegistry {
     /// Per-slot hold timers. Keyed by (room_code, slot_id).
     /// `remove()` yields owned handle; `handle.abort()` is synchronous — no lock held.
     hold_timers: Arc<DashMap<(RoomCode, SlotId), JoinHandle<()>>>,
-    /// Server-side lookup: reconnect_token → (room_code, slot_id).
-    reconnect_tokens: Arc<DashMap<String, (RoomCode, SlotId)>>,
+    /// Server-side lookup: reconnect_token → (room_code, slot_id, is_phone).
+    reconnect_tokens: Arc<DashMap<String, (RoomCode, SlotId, bool)>>,
     pairing_store: Arc<PairingTokenStore>,
     pairing_secret: String,
+    /// HMAC secret for coturn's use-auth-secret REST API (INFRA-04).
+    /// Used in handle_pair to generate ephemeral TURN credentials.
+    turn_shared_secret: String,
     base_url: String,
     hold_ttl_secs: u64,
     pairing_ttl_secs: u64,
+    /// TTL for ephemeral TURN credentials generated at pair time (WR-05).
+    /// Defaults to 3600 s (1 h) — much longer than pairing_ttl_secs (90 s) so
+    /// credentials remain valid for late-joining desktops triggering peer-joined events.
+    turn_credential_ttl_secs: u64,
+    /// Tracks two-sided WebRTC channel readiness (Plan 02, D-08/D-09).
+    /// Key: (room_code, phone_client_id, desktop_client_id)
+    /// Value: (phone_confirmed, desktop_confirmed)
+    channel_ready: Arc<DashMap<(RoomCode, String, String), (bool, bool)>>,
+    /// Dedup guard: prevents duplicate player-ready broadcasts (Plan 02, D-09).
+    /// Key: (room_code, phone_client_id) — inserted on first player-ready broadcast.
+    player_ready_sent: Arc<DashMap<(RoomCode, String), ()>>,
 }
 
 impl RoomRegistry {
     pub fn new(
         pairing_secret: String,
+        turn_shared_secret: String,
         base_url: String,
         hold_ttl_secs: u64,
         pairing_ttl_secs: u64,
+        turn_credential_ttl_secs: u64,
     ) -> Self {
         Self {
             rooms: Arc::new(DashMap::new()),
@@ -95,10 +118,22 @@ impl RoomRegistry {
             reconnect_tokens: Arc::new(DashMap::new()),
             pairing_store: Arc::new(PairingTokenStore::new()),
             pairing_secret,
+            turn_shared_secret,
             base_url,
             hold_ttl_secs,
             pairing_ttl_secs,
+            turn_credential_ttl_secs,
+            channel_ready: Arc::new(DashMap::new()),
+            player_ready_sent: Arc::new(DashMap::new()),
         }
+    }
+
+    /// Evict expired consumed pairing tokens from the used-token store (WR-06).
+    ///
+    /// Delegates to `PairingTokenStore::sweep_expired`. Call periodically from a
+    /// spawned background task (e.g., every 5 minutes) to prevent unbounded growth.
+    pub fn sweep_expired_pairing_tokens(&self) {
+        self.pairing_store.sweep_expired();
     }
 
     /// Broadcast a JSON event to all Connected desktops in the room, excluding `exclude_client_id`.
@@ -187,10 +222,23 @@ impl RoomRegistry {
 
         // Resolve or create room.
         let room_code: RoomCode = if room_code_input.is_empty() {
-            // Create new room with a generated code.
-            let code = self.generate_room_code();
-            self.rooms.insert(code.clone(), Room::new(code.clone(), game_type));
-            code
+            // WR-04: Create new room atomically via Entry API to prevent two concurrent
+            // tasks from generating the same code, both seeing contains_key==false, and
+            // overwriting each other's room (silent data loss).
+            use dashmap::mapref::entry::Entry;
+            use rand::RngExt;
+            const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+            loop {
+                let code: String = {
+                    let mut rng = rand::rng();
+                    (0..6).map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char).collect()
+                };
+                if let Entry::Vacant(e) = self.rooms.entry(code.clone()) {
+                    e.insert(Room::new(code.clone(), game_type));
+                    break code;
+                }
+                // collision — regenerate
+            }
         } else {
             // Validate the existing room exists.
             if !self.rooms.contains_key(&room_code_input) {
@@ -270,6 +318,8 @@ impl RoomRegistry {
                 username: username_trimmed.clone(),
                 status: SlotStatus::Connected,
                 reconnect_token: reconnect_token.clone(),
+                phone_client_id: None,
+                last_heartbeat: None,
             });
 
             // Snapshot current occupants (after inserting joiner) for join-ack.
@@ -301,7 +351,7 @@ impl RoomRegistry {
 
         // Store reconnect token server-side (T-03-05 mitigation).
         self.reconnect_tokens
-            .insert(reconnect_token.clone(), (actual_room_code.clone(), slot_id));
+            .insert(reconnect_token.clone(), (actual_room_code.clone(), slot_id, false));
 
         // Build pairing URL (D-13).
         let pairing_url = format!("{}/phone?token={}", self.base_url, pairing_token);
@@ -318,6 +368,50 @@ impl RoomRegistry {
         .unwrap_or_default();
         self.broadcast_to_room(&actual_room_code, client_id, event, broker);
 
+        // Push peer-joined to the phone (D-06): if a phone is already paired in this room,
+        // notify it that a new desktop joined so it can open a WebRTC channel.
+        // route_to_phone is a safe no-op when no phone_client_id is set.
+        let peer_joined_bytes = serde_json::to_vec(&serde_json::json!({
+            "type": "peer-joined",
+            "payload": {
+                "peer": {
+                    "id": client_id,
+                    "slot": slot_id,
+                    "username": username_trimmed
+                }
+            }
+        }))
+        .unwrap_or_default();
+        self.route_to_phone(&actual_room_code, peer_joined_bytes, broker);
+
+        // Generate ephemeral TURN credentials for the desktop so handleOffer can use TURN.
+        let ice_servers = match generate_turn_credentials(
+            &self.turn_shared_secret,
+            client_id,
+            self.turn_credential_ttl_secs,
+        ) {
+            Ok(creds) => {
+                let coturn_host = self.base_url
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .split(':')
+                    .next()
+                    .unwrap_or("localhost");
+                serde_json::json!([
+                    { "urls": format!("stun:{}:3478", coturn_host) },
+                    {
+                        "urls": format!("turn:{}:3478", coturn_host),
+                        "username": creds.username,
+                        "credential": creds.password
+                    }
+                ])
+            }
+            Err(e) => {
+                tracing::warn!("failed to generate TURN credentials for desktop join: {e}");
+                serde_json::json!([{ "urls": format!("stun:{}", self.base_url.trim_start_matches("https://").trim_start_matches("http://").split(':').next().unwrap_or("localhost")) }])
+            }
+        };
+
         serde_json::json!({
             "type": "join-ack",
             "payload": {
@@ -325,7 +419,8 @@ impl RoomRegistry {
                 "room_code": actual_room_code,
                 "reconnect_token": reconnect_token,
                 "pairing_url": pairing_url,
-                "slots": slots_snapshot
+                "slots": slots_snapshot,
+                "ice_servers": ice_servers
             }
         })
     }
@@ -350,8 +445,8 @@ impl RoomRegistry {
             }
         };
 
-        // Look up (room_code, slot_id) from server-side table.
-        let (room_code, slot_id) = match self.reconnect_tokens.get(&reconnect_token) {
+        // Look up (room_code, slot_id, is_phone) from server-side table.
+        let (room_code, slot_id, is_phone) = match self.reconnect_tokens.get(&reconnect_token) {
             Some(entry) => entry.value().clone(),
             None => {
                 return serde_json::json!({
@@ -380,18 +475,81 @@ impl RoomRegistry {
                 }
             };
             let idx = (slot_id - 1) as usize;
+            // WR-07: Assert the slot is Disconnected before accepting the reconnect.
+            // If the hold timer fired between the reconnect_tokens lookup above and
+            // this get_mut (race: release_slot_if_disconnected set slot to None),
+            // the slot is gone and we must reject — otherwise we'd silently corrupt
+            // a stale reconnect_tokens entry that future pair attempts would hit.
             if let Some(Some(info)) = room_ref.slots.get_mut(idx) {
-                info.client_id = client_id.to_string();
+                // Allow reconnect from Disconnected (after heartbeat miss) OR from Connected
+                // (hot reconnect: transport dropped before heartbeat miss fired). The
+                // reconnect_token itself proves identity — invalid/unknown tokens are
+                // already rejected above via reconnect_tokens lookup.
+                if info.status != SlotStatus::Disconnected && info.status != SlotStatus::Connected {
+                    return serde_json::json!({
+                        "type": "join-error",
+                        "payload": {"reason": "slot_not_held"}
+                    });
+                }
+                if is_phone {
+                    info.phone_client_id = Some(client_id.to_string());
+                } else {
+                    info.client_id = client_id.to_string();
+                }
                 info.status = SlotStatus::Connected;
+                // Reset heartbeat clock so the monitor doesn't immediately re-fire
+                // (elapsed was already > 65s from the disconnect period).
+                info.last_heartbeat = Some(std::time::Instant::now());
             }
         }
         // DashMap RefMut dropped here.
+
+        // Clear player_ready_sent and channel_ready so WebRTC can re-handshake after
+        // a transport gap.
+        //
+        // Phone reconnect: clear by phone_client_id (key is phone_client_id).
+        // Desktop reconnect: the phone did NOT disconnect, so its phone_client_id key
+        //   is still in player_ready_sent from the original session. Clearing it allows
+        //   the phone to re-establish WebRTC with the new desktop client_id and receive
+        //   a fresh player-ready. Without this, handle_rtc_channel_ready returns early
+        //   on the dedup guard and the desktop never gets player-ready after reload.
+        if is_phone {
+            self.player_ready_sent.remove(&(room_code.clone(), client_id.to_string()));
+            self.channel_ready.retain(|k, _| !(k.0 == room_code && k.1 == client_id));
+        } else {
+            // Desktop reconnect: clear dedup guard for the phone paired to this slot,
+            // then send peer-joined to the phone so it re-initiates WebRTC with the
+            // new desktop client_id. Without peer-joined the phone never re-offers.
+            let phone_client_id_opt: Option<String> = self.rooms.get(&room_code)
+                .and_then(|r| {
+                    r.slots.get((slot_id - 1) as usize)
+                        .and_then(|s| s.as_ref()?.phone_client_id.clone())
+                });
+            if let Some(ref phone_id) = phone_client_id_opt {
+                // Clear the per-phone player_ready_sent entry keyed by phone_client_id.
+                self.player_ready_sent.remove(&(room_code.clone(), phone_id.clone()));
+                self.channel_ready.retain(|k, _| !(k.0 == room_code && k.1 == phone_id.as_str()));
+            }
+            // Notify the phone that a new desktop peer has joined so it calls
+            // openChannelToPeer(client_id) and sends a fresh WebRTC offer.
+            let peer_joined_bytes = serde_json::to_vec(&serde_json::json!({
+                "type": "peer-joined",
+                "payload": {
+                    "peer": {
+                        "id": client_id,
+                        "slot": slot_id
+                    }
+                }
+            }))
+            .unwrap_or_default();
+            self.route_to_phone(&room_code, peer_joined_bytes, broker);
+        }
 
         // Generate fresh reconnect_token and pairing_url (D-17).
         let new_reconnect_token = generate_reconnect_token();
         self.reconnect_tokens.remove(&reconnect_token);
         self.reconnect_tokens
-            .insert(new_reconnect_token.clone(), (room_code.clone(), slot_id));
+            .insert(new_reconnect_token.clone(), (room_code.clone(), slot_id, is_phone));
 
         // Also update stored reconnect token in slot info.
         if let Some(mut room_ref) = self.rooms.get_mut(&room_code) {
@@ -459,6 +617,34 @@ impl RoomRegistry {
         .unwrap_or_default();
         self.broadcast_to_room(&room_code, client_id, event, broker);
 
+        // Generate ephemeral TURN credentials for the reconnecting desktop.
+        let ice_servers = match generate_turn_credentials(
+            &self.turn_shared_secret,
+            client_id,
+            self.turn_credential_ttl_secs,
+        ) {
+            Ok(creds) => {
+                let coturn_host = self.base_url
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .split(':')
+                    .next()
+                    .unwrap_or("localhost");
+                serde_json::json!([
+                    { "urls": format!("stun:{}:3478", coturn_host) },
+                    {
+                        "urls": format!("turn:{}:3478", coturn_host),
+                        "username": creds.username,
+                        "credential": creds.password
+                    }
+                ])
+            }
+            Err(e) => {
+                tracing::warn!("failed to generate TURN credentials for desktop reconnect: {e}");
+                serde_json::json!([{ "urls": "stun:localhost:3478" }])
+            }
+        };
+
         serde_json::json!({
             "type": "join-ack",
             "payload": {
@@ -466,17 +652,23 @@ impl RoomRegistry {
                 "room_code": room_code,
                 "reconnect_token": new_reconnect_token,
                 "pairing_url": pairing_url,
-                "slots": slots_snapshot
+                "slots": slots_snapshot,
+                "ice_servers": ice_servers
             }
         })
     }
 
     /// Handle a `pair` message from a phone client.
     ///
-    /// Validates the HMAC pairing token (single-use), finds the desktop's client_id,
-    /// returns a `pair-ack` so the phone can initiate WebRTC to the desktop.
+    /// Validates the HMAC pairing token (single-use, T-04-02 mitigation), records the
+    /// phone's client_id in the paired SlotInfo, and returns an enhanced `pair-ack`
+    /// carrying the room roster (peers[]) and ephemeral ICE server config (D-04).
+    ///
+    /// Collect-then-drop pattern: DashMap RefMut is held only to write phone_client_id,
+    /// then dropped before collecting peers and calling generate_turn_credentials.
     pub async fn handle_pair(
         &self,
+        phone_client_id: &str,
         raw_payload: &serde_json::Value,
         _broker: &SignalingBroker,
     ) -> serde_json::Value {
@@ -490,7 +682,7 @@ impl RoomRegistry {
             }
         };
 
-        // Validate and consume token (single-use, T-03-01 mitigation).
+        // Validate and consume token (single-use, T-04-02 mitigation).
         let (room_code, slot_id) =
             match self.pairing_store.validate_and_consume(&self.pairing_secret, &token) {
                 Some(r) => r,
@@ -502,27 +694,143 @@ impl RoomRegistry {
                 }
             };
 
-        // Find the desktop's client_id from the slot.
-        let desktop_client_id = self.rooms.get(&room_code).and_then(|r| {
-            r.slots
-                .get((slot_id - 1) as usize)
-                .and_then(|s| s.as_ref().map(|i| i.client_id.clone()))
-        });
-
-        match desktop_client_id {
-            Some(id) => {
-                serde_json::json!({
-                    "type": "pair-ack",
-                    "payload": {"desktop_id": id}
-                })
-            }
-            None => {
-                serde_json::json!({
-                    "type": "pair-error",
-                    "payload": {"reason": "slot_not_found"}
-                })
+        // Step 1: Store phone_client_id in the paired slot (collect-then-drop).
+        // Hold RefMut only for the write; drop before any async or broker call.
+        {
+            if let Some(mut room_ref) = self.rooms.get_mut(&room_code) {
+                let idx = (slot_id - 1) as usize;
+                if let Some(Some(slot)) = room_ref.slots.get_mut(idx) {
+                    slot.phone_client_id = Some(phone_client_id.to_string());
+                }
             }
         }
+        // DashMap RefMut dropped here.
+
+        // Step 2: Collect desktop_id and peers list (collect-then-drop).
+        let (desktop_client_id, peers_list) = {
+            if let Some(room_ref) = self.rooms.get(&room_code) {
+                let desktop_slot = room_ref.slots
+                    .get((slot_id - 1) as usize)
+                    .and_then(|s| s.as_ref());
+
+                let desktop_id = match desktop_slot {
+                    Some(s) => s.client_id.clone(),
+                    None => {
+                        return serde_json::json!({
+                            "type": "pair-error",
+                            "payload": {"reason": "slot_not_found"}
+                        });
+                    }
+                };
+
+                // Build peers list from all Connected desktop slots (never the phone — Pitfall 7).
+                let peers: Vec<serde_json::Value> = room_ref.slots.iter()
+                    .enumerate()
+                    .filter_map(|(i, s)| {
+                        s.as_ref().and_then(|info| {
+                            if info.status == SlotStatus::Connected {
+                                Some(serde_json::json!({
+                                    "id": info.client_id,
+                                    "slot": (i + 1) as u8,
+                                    "username": info.username
+                                }))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+
+                (desktop_id, peers)
+            } else {
+                return serde_json::json!({
+                    "type": "pair-error",
+                    "payload": {"reason": "slot_not_found"}
+                });
+            }
+        };
+        // DashMap Ref dropped here.
+
+        // Generate a phone-specific reconnect token (separate from the desktop's).
+        let phone_reconnect_token = generate_reconnect_token();
+        self.reconnect_tokens.insert(phone_reconnect_token.clone(), (room_code.clone(), slot_id, true));
+
+        // Step 3: Generate ephemeral TURN credentials for the phone.
+        // WR-05: use turn_credential_ttl_secs (default 3600 s) rather than
+        // pairing_ttl_secs (default 90 s) so credentials remain valid for
+        // late peer-joined connections triggered long after initial pairing.
+        let creds = match generate_turn_credentials(
+            &self.turn_shared_secret,
+            phone_client_id,
+            self.turn_credential_ttl_secs,
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("failed to generate TURN credentials at pair time: {e}");
+                return serde_json::json!({
+                    "type": "pair-error",
+                    "payload": {"reason": "internal_error"}
+                });
+            }
+        };
+
+        // Extract the hostname from base_url for STUN/TURN endpoints.
+        // Format: https://<host>[:<port>] — strip scheme and optional port.
+        let coturn_host = self.base_url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split(':')
+            .next()
+            .unwrap_or("localhost");
+
+        let ice_servers = serde_json::json!([
+            { "urls": format!("stun:{}:3478", coturn_host) },
+            {
+                "urls": format!("turn:{}:3478", coturn_host),
+                "username": creds.username,
+                "credential": creds.password
+            }
+        ]);
+
+        // pairing_url echoes the phone entry point (reconnect semantics — D-14).
+        let pairing_url = format!("{}/phone", self.base_url);
+
+        tracing::info!(
+            room_code = %room_code, slot_id = %slot_id,
+            phone_client_id = %phone_client_id,
+            "pair: phone paired with desktop, roster size = {}",
+            peers_list.len()
+        );
+
+        serde_json::json!({
+            "type": "pair-ack",
+            "payload": {
+                "desktop_id": desktop_client_id,
+                "slot": slot_id,
+                "room_code": room_code,
+                "reconnect_token": phone_reconnect_token,
+                "pairing_url": pairing_url,
+                "peers": peers_list,
+                "ice_servers": ice_servers
+            }
+        })
+    }
+
+    /// Returns true if `client_id` is currently the phone owner of any slot.
+    ///
+    /// Used by relay exit to decide whether to call `on_client_disconnect` immediately
+    /// (desktop) or defer to the heartbeat monitor (phone).
+    pub fn is_phone_client(&self, client_id: &str) -> bool {
+        for room_ref in self.rooms.iter() {
+            for slot in room_ref.slots.iter() {
+                if let Some(info) = slot {
+                    if info.phone_client_id.as_deref() == Some(client_id) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Called when a WS/WT connection drops. Marks slot Disconnected, broadcasts
@@ -578,6 +886,17 @@ impl RoomRegistry {
         .unwrap_or_default();
         self.broadcast_to_room(&room_code, client_id, event, broker);
 
+        // Push peer-left to the phone (D-07): notify the phone that this desktop left
+        // so it can close the matching RTCPeerConnection.
+        // reason=disconnect: temporary drop (reload/network) — phone skips recalibration on reconnect.
+        // Only push if a phone is paired; route_to_phone is a safe no-op otherwise.
+        let peer_left_bytes = serde_json::to_vec(&serde_json::json!({
+            "type": "peer-left",
+            "payload": { "peer_id": client_id, "reason": "disconnect" }
+        }))
+        .unwrap_or_default();
+        self.route_to_phone(&room_code, peer_left_bytes, broker);
+
         // Spawn hold timer (Pattern 3 — per-slot JoinHandle, cancel-safe).
         let registry = self.clone();
         let broker_clone = broker.clone();
@@ -592,8 +911,8 @@ impl RoomRegistry {
             // release_slot_if_disconnected returns Some(username) only when the
             // slot was genuinely still Disconnected — reconnect sets it to Connected.
             if let Some(evicted_username) = registry.release_slot_if_disconnected(&code_clone, slot_id) {
-                // Remove the stale reconnect token.
-                registry.reconnect_tokens.retain(|_, v| v != &(code_clone.clone(), slot_id));
+                // Remove the stale reconnect token(s) for this slot.
+                registry.reconnect_tokens.retain(|_, v| !(v.0 == code_clone && v.1 == slot_id));
 
                 // Broadcast player-left (D-19).
                 let left_event = serde_json::to_vec(&serde_json::json!({
@@ -622,7 +941,7 @@ impl RoomRegistry {
     /// Explicit player leave: immediately release the slot and broadcast player-left.
     /// Unlike on_client_disconnect, no hold timer is started — the leave is intentional.
     pub async fn handle_leave(&self, client_id: &str, broker: &SignalingBroker) {
-        let found: Option<(RoomCode, SlotId, String)> = {
+        let found: Option<(RoomCode, SlotId, String, Option<String>)> = {
             let mut found = None;
             'outer: for mut room_ref in self.rooms.iter_mut() {
                 let code = room_ref.code.clone();
@@ -631,8 +950,9 @@ impl RoomRegistry {
                         if info.client_id == client_id {
                             let slot_id = (idx + 1) as u8;
                             let username = info.username.clone();
+                            let phone_id = info.phone_client_id.clone();
                             *slot = None;
-                            found = Some((code, slot_id, username));
+                            found = Some((code, slot_id, username, phone_id));
                             break 'outer;
                         }
                     }
@@ -641,7 +961,7 @@ impl RoomRegistry {
             found
         };
 
-        let (room_code, slot_id, username) = match found {
+        let (room_code, slot_id, username, phone_client_id) = match found {
             Some(v) => v,
             None => {
                 tracing::debug!(client_id = %client_id, "leave-room: client not in any room");
@@ -654,8 +974,8 @@ impl RoomRegistry {
             handle.abort();
         }
 
-        // Remove reconnect token — slot is gone, token is invalid.
-        self.reconnect_tokens.retain(|_, v| v != &(room_code.clone(), slot_id));
+        // Remove reconnect token(s) — slot is gone, tokens are invalid.
+        self.reconnect_tokens.retain(|_, v| !(v.0 == room_code && v.1 == slot_id));
 
         let event = serde_json::to_vec(&serde_json::json!({
             "type": "room-event",
@@ -667,6 +987,20 @@ impl RoomRegistry {
         }))
         .unwrap_or_default();
         self.broadcast_to_room(&room_code, client_id, event, broker);
+
+        // Push peer-left to the phone (D-07) on explicit leave.
+        // reason=leave: intentional — phone resets calibration and shows view-ended.
+        // phone_client_id captured before slot was set to None — route_to_phone would find no slot.
+        if let Some(phone_id) = phone_client_id {
+            let peer_left_bytes = serde_json::to_vec(&serde_json::json!({
+                "type": "peer-left",
+                "payload": { "peer_id": client_id, "reason": "leave" }
+            }))
+            .unwrap_or_default();
+            if !broker.route(&phone_id, peer_left_bytes) {
+                tracing::warn!(phone_id = %phone_id, "handle_leave: phone not connected, peer-left not delivered");
+            }
+        }
 
         tracing::info!(
             room_code = %room_code, slot_id = %slot_id,
@@ -695,6 +1029,413 @@ impl RoomRegistry {
             }
             _ => None,
         }
+    }
+
+    /// Route a server-push event to the phone associated with a room slot.
+    ///
+    /// Collects the phone_client_id while holding the DashMap Ref, drops the Ref,
+    /// then calls broker.route — never holds a Ref across the broker call (Pitfall 3).
+    fn route_to_phone(&self, room_code: &str, event_bytes: Vec<u8>, broker: &SignalingBroker) {
+        let phone_ids: Vec<String> = self.rooms.get(room_code)
+            .map(|room| room.slots.iter()
+                .filter_map(|s| s.as_ref()?.phone_client_id.clone())
+                .collect())
+            .unwrap_or_default();
+        // DashMap Ref dropped here.
+        for id in phone_ids {
+            if !broker.route(&id, event_bytes.clone()) {
+                tracing::warn!(phone_id = %id, "route_to_phone: phone not connected");
+            }
+        }
+    }
+
+    /// Handle an `rtc-channel-ready` message from either the phone or a desktop.
+    ///
+    /// Both sides send this when their WebRTC data channel opens. This method
+    /// tracks two-sided confirmation and fires exactly one `player-ready` broadcast
+    /// once every Connected desktop has a confirmed channel with the phone (D-08/D-09).
+    ///
+    /// Collect-then-drop: all DashMap Refs are dropped before any broker.route call
+    /// (RESEARCH.md Pitfall 3). Input validation: missing `with` → early return
+    /// (T-04-06 mitigation).
+    pub async fn handle_rtc_channel_ready(
+        &self,
+        sender_id: &str,
+        payload: &serde_json::Value,
+        broker: &SignalingBroker,
+    ) {
+        // 1. Defensive extraction of "with" (T-04-06 mitigation).
+        let with_id = match payload["with"].as_str() {
+            Some(v) => v.to_string(),
+            None => {
+                tracing::warn!(sender_id = %sender_id, "rtc-channel-ready: missing 'with' field");
+                return;
+            }
+        };
+
+        // 2. Determine sender role by scanning room slots (T-04-07: role derived
+        //    from server-held slot state, not client-asserted identity).
+        //    Collect all needed data and drop all DashMap Refs before any async work.
+        let role_info: Option<(RoomCode, String, String, bool)> = {
+            let mut found: Option<(RoomCode, String, String, bool)> = None;
+            'outer: for room_ref in self.rooms.iter() {
+                let room = room_ref.value();
+                for slot in room.slots.iter().flatten() {
+                    if slot.phone_client_id.as_deref() == Some(sender_id) {
+                        // Sender is the phone; with_id is the desktop
+                        found = Some((room.code.clone(), sender_id.to_string(), with_id.clone(), true));
+                        break 'outer;
+                    }
+                    if slot.client_id == sender_id {
+                        // Sender is the desktop; with_id is the phone
+                        found = Some((room.code.clone(), with_id.clone(), sender_id.to_string(), false));
+                        break 'outer;
+                    }
+                }
+            }
+            found
+        };
+        // All DashMap Refs dropped here.
+
+        let (room_code, phone_id, desktop_id, is_phone_sender) = match role_info {
+            Some(v) => v,
+            None => {
+                tracing::warn!(
+                    sender_id = %sender_id,
+                    "rtc-channel-ready: sender not found in any room slot"
+                );
+                return;
+            }
+        };
+
+        // 3. Upsert the channel_ready entry; canonical key: (room, phone, desktop).
+        {
+            let mut entry = self.channel_ready
+                .entry((room_code.clone(), phone_id.clone(), desktop_id.clone()))
+                .or_insert((false, false));
+            if is_phone_sender {
+                entry.0 = true;
+            } else {
+                entry.1 = true;
+            }
+        }
+        // DashMap RefMut dropped here.
+
+        // 4. Collect all Connected desktop client_ids + phone slot/username.
+        //    Drop the room Ref before checking channel_ready (Pitfall 3).
+        let (all_desktop_ids, phone_slot, phone_username): (Vec<String>, u8, String) = {
+            if let Some(room_ref) = self.rooms.get(&room_code) {
+                let desktops: Vec<String> = room_ref.slots.iter()
+                    .filter_map(|s| {
+                        s.as_ref().and_then(|info| {
+                            if info.status == SlotStatus::Connected {
+                                Some(info.client_id.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+
+                let (slot_num, username) = room_ref.slots.iter()
+                    .enumerate()
+                    .find_map(|(i, s)| {
+                        s.as_ref().and_then(|info| {
+                            if info.phone_client_id.as_deref() == Some(phone_id.as_str()) {
+                                Some(((i + 1) as u8, info.username.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .unwrap_or((0u8, String::new()));
+
+                (desktops, slot_num, username)
+            } else {
+                (vec![], 0u8, String::new())
+            }
+        };
+        // DashMap Ref dropped here.
+
+        // 5. Check whether every Connected desktop has (true, true) for this phone.
+        if all_desktop_ids.is_empty() {
+            return;
+        }
+        let all_confirmed = all_desktop_ids.iter().all(|desktop| {
+            self.channel_ready
+                .get(&(room_code.clone(), phone_id.clone(), desktop.clone()))
+                .map(|entry| entry.0 && entry.1)
+                .unwrap_or(false)
+        });
+        // All short-lived channel_ready Refs dropped after each .get() call.
+
+        if !all_confirmed {
+            return;
+        }
+
+        // 6. Dedup guard: atomic check-and-insert via Entry API to prevent a TOCTOU
+        //    race where two concurrent rtc-channel-ready tasks both see contains_key==false
+        //    and both broadcast player-ready (Plan 02, D-09).
+        use dashmap::mapref::entry::Entry;
+        match self.player_ready_sent.entry((room_code.clone(), phone_id.clone())) {
+            Entry::Occupied(_) => return,
+            Entry::Vacant(e) => { e.insert(()); }
+        }
+        // Only the task that wins the Vacant entry reaches this point.
+
+        // 7. Build player-ready payload and broadcast (Pitfall 3: no DashMap Ref held).
+        let player_ready_bytes = match serde_json::to_vec(&serde_json::json!({
+            "type": "player-ready",
+            "payload": {
+                "player_id": phone_id,
+                "slot": phone_slot,
+                "username": phone_username
+            }
+        })) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!("failed to serialize player-ready: {e}");
+                return;
+            }
+        };
+
+        tracing::info!(
+            room_code = %room_code,
+            phone_id = %phone_id,
+            slot = %phone_slot,
+            "player-ready: all channels confirmed, broadcasting"
+        );
+
+        // Broadcast to all Connected desktops.
+        self.broadcast_to_room(&room_code, "", player_ready_bytes.clone(), broker);
+        // Route to the phone as well.
+        self.route_to_phone(&room_code, player_ready_bytes, broker);
+    }
+
+    /// Handle a `phone-state` message from a phone client (D-17/D-18).
+    ///
+    /// Locates the room containing the phone's slot, builds a `phone-state` envelope
+    /// carrying the `state` (and `with` if present), then relays it to all Connected
+    /// desktops via `broadcast_to_room`. Never echoes back to the phone.
+    pub async fn handle_phone_state(
+        &self,
+        sender_id: &str,
+        payload: &serde_json::Value,
+        broker: &SignalingBroker,
+    ) {
+        // Defensive extraction: ignore unknown/malformed payloads (T-04-09 mitigation).
+        let state = match payload["state"].as_str() {
+            Some(s) => s.to_string(),
+            None => {
+                tracing::warn!(sender_id = %sender_id, "phone-state: missing 'state' field");
+                return;
+            }
+        };
+
+        // Optional `with` field (present for channel-lost / channel-recovered).
+        let with_field = payload["with"].as_str().map(|s| s.to_string());
+
+        // Locate the room and slot for this phone (collect-then-drop).
+        let room_and_slot: Option<(RoomCode, SlotId)> = {
+            let mut found = None;
+            'outer: for room_ref in self.rooms.iter() {
+                let room = room_ref.value();
+                for (idx, slot_opt) in room.slots.iter().enumerate() {
+                    if let Some(slot) = slot_opt {
+                        if slot.phone_client_id.as_deref() == Some(sender_id) {
+                            found = Some((room.code.clone(), (idx + 1) as u8));
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+            found
+        };
+        // All DashMap Refs dropped here.
+
+        let (room_code, slot_id) = match room_and_slot {
+            Some(v) => v,
+            None => {
+                tracing::warn!(
+                    sender_id = %sender_id,
+                    "phone-state: phone not found in any room"
+                );
+                return;
+            }
+        };
+
+        // Build the relay envelope with optional `with` field.
+        let relay_payload = if let Some(ref w) = with_field {
+            serde_json::json!({ "state": state, "slot": slot_id, "with": w })
+        } else {
+            serde_json::json!({ "state": state, "slot": slot_id })
+        };
+
+        let event_bytes = match serde_json::to_vec(&serde_json::json!({
+            "type": "phone-state",
+            "payload": relay_payload
+        })) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!("phone-state: failed to serialize relay envelope: {e}");
+                return;
+            }
+        };
+
+        // Relay to all Connected desktops; exclude the phone (broadcast_to_room filters
+        // to SlotStatus::Connected desktop client_ids, never to phone_client_id).
+        self.broadcast_to_room(&room_code, sender_id, event_bytes, broker);
+    }
+
+    /// Update the heartbeat timestamp for the slot whose `phone_client_id` matches.
+    ///
+    /// Synchronous O(1)-per-slot update — holds no ref across an await (Pitfall 3).
+    /// Logs a warning if the phone is not found in any slot (T-04-09 mitigation).
+    pub fn handle_heartbeat(&self, phone_client_id: &str) {
+        for mut room_ref in self.rooms.iter_mut() {
+            for slot in room_ref.slots.iter_mut().flatten() {
+                if slot.phone_client_id.as_deref() == Some(phone_client_id) {
+                    slot.last_heartbeat = Some(std::time::Instant::now());
+                    return;
+                }
+            }
+        }
+        tracing::warn!(
+            phone_client_id = %phone_client_id,
+            "heartbeat: phone not found in any slot"
+        );
+    }
+
+    /// Return all Connected slots that have a phone_client_id AND a last_heartbeat
+    /// older than `timeout`. Slots that never heartbeated (None) are excluded —
+    /// miss detection only starts after the first heartbeat post-player-ready.
+    ///
+    /// Collects into an owned Vec while iterating DashMap, drops all Refs before
+    /// returning (Pitfall 3 — no Ref across async boundary).
+    pub fn phones_missing_heartbeat(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Vec<(RoomCode, SlotId, String, String)> {
+        let now = std::time::Instant::now();
+        let mut missing = Vec::new();
+        for room_ref in self.rooms.iter() {
+            let room = room_ref.value();
+            for (idx, slot_opt) in room.slots.iter().enumerate() {
+                if let Some(slot) = slot_opt {
+                    if slot.status == SlotStatus::Connected {
+                        if let (Some(phone_id), Some(hb)) =
+                            (&slot.phone_client_id, &slot.last_heartbeat)
+                        {
+                            if now.duration_since(*hb) > timeout {
+                                missing.push((
+                                    room.code.clone(),
+                                    (idx + 1) as u8,
+                                    slot.username.clone(),
+                                    phone_id.clone(),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        missing
+    }
+
+    /// Mark a phone slot Disconnected after a heartbeat miss (D-19).
+    ///
+    /// - Sets the slot status to Disconnected.
+    /// - Broadcasts a `phone-state` envelope with `state: "heartbeat-miss"` to all
+    ///   room desktops (never echoed to the phone — it is already silent).
+    /// - Spawns the same hold timer used by `on_client_disconnect` (hold_ttl_secs),
+    ///   so the slot is available for reconnect during the hold window.
+    pub async fn handle_heartbeat_miss(
+        &self,
+        room_code: &str,
+        slot_id: SlotId,
+        broker: &SignalingBroker,
+    ) {
+        // Step 1: Verify the slot is still Connected and collect username.
+        // Drop DashMap Ref before any broker or async call (Pitfall 3).
+        let username: Option<String> = {
+            if let Some(room_ref) = self.rooms.get(room_code) {
+                let idx = (slot_id - 1) as usize;
+                room_ref.slots.get(idx).and_then(|s| s.as_ref()).and_then(|slot| {
+                    if slot.status == SlotStatus::Connected {
+                        Some(slot.username.clone())
+                    } else {
+                        None // already Disconnected — avoid double-miss
+                    }
+                })
+            } else {
+                None
+            }
+        };
+        // DashMap Ref dropped here.
+
+        let username = match username {
+            Some(u) => u,
+            None => return, // slot not found or already Disconnected
+        };
+
+        tracing::warn!(
+            room_code = %room_code, slot_id = %slot_id,
+            "heartbeat miss — broadcasting to desktops, then marking slot Disconnected"
+        );
+
+        // Step 2: Broadcast phone-state heartbeat-miss to all Connected desktops BEFORE
+        // marking the slot Disconnected (so broadcast_to_room's Connected filter still works).
+        let event_bytes = serde_json::to_vec(&serde_json::json!({
+            "type": "phone-state",
+            "payload": { "state": "heartbeat-miss", "slot": slot_id }
+        }))
+        .unwrap_or_default();
+        self.broadcast_to_room(room_code, "", event_bytes, broker);
+
+        // Step 3: Now mark the slot Disconnected.
+        {
+            if let Some(mut room_ref) = self.rooms.get_mut(room_code) {
+                let idx = (slot_id - 1) as usize;
+                if let Some(Some(slot)) = room_ref.slots.get_mut(idx) {
+                    slot.status = SlotStatus::Disconnected;
+                }
+            }
+        }
+        // DashMap RefMut dropped here.
+
+        // Spawn hold timer — reuses same pattern as on_client_disconnect (D-19).
+        let registry = self.clone();
+        let broker_clone = broker.clone();
+        let code_clone = room_code.to_string();
+        let username_clone = username.clone();
+        let hold_secs = self.hold_ttl_secs;
+
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(hold_secs)).await;
+            if let Some(evicted_username) =
+                registry.release_slot_if_disconnected(&code_clone, slot_id)
+            {
+                registry
+                    .reconnect_tokens
+                    .retain(|_, v| !(v.0 == code_clone && v.1 == slot_id));
+                let left_event = serde_json::to_vec(&serde_json::json!({
+                    "type": "room-event",
+                    "payload": {
+                        "event": "player-left",
+                        "slot": slot_id,
+                        "username": evicted_username
+                    }
+                }))
+                .unwrap_or_default();
+                registry.broadcast_to_room(&code_clone, "", left_event, &broker_clone);
+                tracing::info!(
+                    room_code = %code_clone, slot_id = %slot_id,
+                    username = %username_clone,
+                    "heartbeat-miss hold timer expired — slot released"
+                );
+            }
+        });
+        self.hold_timers.insert((room_code.to_string(), slot_id), handle);
     }
 
     /// Generate a 6-character uppercase room code from the unambiguous charset
@@ -730,9 +1471,11 @@ mod tests {
     fn make_registry() -> RoomRegistry {
         RoomRegistry::new(
             "test-pairing-secret".to_string(),
+            "turn-secret".to_string(),           // turn_shared_secret (fixed for tests)
             "https://localhost:8443".to_string(),
-            60,  // hold_ttl_secs
-            300, // pairing_ttl_secs
+            60,   // hold_ttl_secs
+            300,  // pairing_ttl_secs
+            3600, // turn_credential_ttl_secs
         )
     }
 
@@ -857,9 +1600,11 @@ mod tests {
         // Use a 0-second hold_ttl so the timer fires almost immediately.
         let registry = RoomRegistry::new(
             "sec".to_string(),
+            "turn-secret".to_string(),
             "https://localhost:8443".to_string(),
-            0,   // hold_ttl = 0 → fires as soon as awaited
+            0,    // hold_ttl = 0 → fires as soon as awaited
             300,
+            3600,
         );
         let broker = SignalingBroker::new();
         let _ = broker.register("client-A".to_string());
@@ -910,9 +1655,11 @@ mod tests {
     async fn test_hold_timer_fires() {
         let registry = RoomRegistry::new(
             "sec".to_string(),
+            "turn-secret".to_string(),
             "https://localhost:8443".to_string(),
-            0,   // hold_ttl = 0 → fires almost immediately
+            0,    // hold_ttl = 0 → fires almost immediately
             300,
+            3600,
         );
         let broker = SignalingBroker::new();
         let _ = broker.register("client-A".to_string());
@@ -938,6 +1685,562 @@ mod tests {
         );
     }
 
+    // ── Phase 4 pair-ack tests ────────────────────────────────────────────────
+
+    /// After a desktop joins and a phone pairs, pair-ack["peers"] is non-empty.
+    /// Only Connected desktop slots appear; the phone is never listed (Pitfall 7).
+    #[tokio::test]
+    async fn test_pair_ack_includes_peers() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("client-D".to_string());
+        let _ = broker.register("phone-XYZ".to_string());
+
+        // Desktop joins
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        assert_eq!(join_result["type"], "join-ack");
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+
+        // Phone pairs
+        let pair_payload = serde_json::json!({ "token": token });
+        let pair_result = registry.handle_pair("phone-XYZ", &pair_payload, &broker).await;
+
+        assert_eq!(pair_result["type"], "pair-ack");
+        let peers = pair_result["payload"]["peers"]
+            .as_array()
+            .expect("peers must be a JSON array");
+        assert!(!peers.is_empty(), "peers must be non-empty after a desktop has joined");
+        let peer = &peers[0];
+        assert_eq!(peer["id"].as_str().unwrap(), "client-D", "peer id must match desktop");
+        assert_eq!(peer["slot"].as_u64().unwrap(), 1, "peer slot must be 1");
+        assert!(peer["username"].as_str().is_some(), "peer must have username");
+        // Phone itself must NOT appear in the peers list
+        assert!(
+            !peers.iter().any(|p| p["id"].as_str() == Some("phone-XYZ")),
+            "phone must never appear in peers list (Pitfall 7)"
+        );
+    }
+
+    /// After handle_pair is called with phone_client_id "phone-XYZ", the paired
+    /// SlotInfo.phone_client_id == Some("phone-XYZ").
+    #[tokio::test]
+    async fn test_pair_ack_records_phone_client_id() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("client-D".to_string());
+        let _ = broker.register("phone-XYZ".to_string());
+
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+        let room_code = join_result["payload"]["room_code"].as_str().unwrap().to_string();
+
+        let pair_payload = serde_json::json!({ "token": token });
+        let pair_result = registry.handle_pair("phone-XYZ", &pair_payload, &broker).await;
+        assert_eq!(pair_result["type"], "pair-ack");
+
+        // Verify phone_client_id is recorded in SlotInfo
+        let room = registry.rooms.get(&room_code).unwrap();
+        let slot = room.slots[0].as_ref().unwrap();
+        assert_eq!(
+            slot.phone_client_id.as_deref(),
+            Some("phone-XYZ"),
+            "phone_client_id must be recorded on the paired SlotInfo"
+        );
+    }
+
+    /// pair-ack["ice_servers"] is a non-empty array; the TURN entry has
+    /// "username" and "credential" fields from generate_turn_credentials.
+    #[tokio::test]
+    async fn test_pair_ack_includes_ice_servers() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("client-D".to_string());
+        let _ = broker.register("phone-XYZ".to_string());
+
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+
+        let pair_payload = serde_json::json!({ "token": token });
+        let pair_result = registry.handle_pair("phone-XYZ", &pair_payload, &broker).await;
+        assert_eq!(pair_result["type"], "pair-ack");
+
+        let ice_servers = pair_result["payload"]["ice_servers"]
+            .as_array()
+            .expect("ice_servers must be a JSON array");
+        assert!(!ice_servers.is_empty(), "ice_servers must be non-empty");
+
+        let stun_entry = ice_servers
+            .iter()
+            .find(|s| s["urls"].as_str().map(|u| u.starts_with("stun:")).unwrap_or(false));
+        assert!(stun_entry.is_some(), "must have a STUN entry");
+
+        let turn_entry = ice_servers
+            .iter()
+            .find(|s| s["urls"].as_str().map(|u| u.starts_with("turn:")).unwrap_or(false))
+            .expect("must have a TURN entry");
+        assert!(
+            turn_entry["username"].as_str().is_some(),
+            "TURN entry must have username"
+        );
+        assert!(
+            turn_entry["credential"].as_str().is_some(),
+            "TURN entry must have credential"
+        );
+    }
+
+    // ── Phase 4 Plan 02 rtc-channel-ready / player-ready tests ──────────────────
+
+    /// Helper: join one desktop and pair one phone; returns (room_code, phone_rx, desktop_rx).
+    async fn setup_one_desktop_one_phone(
+        registry: &RoomRegistry,
+        broker: &SignalingBroker,
+        desktop_id: &str,
+        phone_id: &str,
+    ) -> String {
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join(desktop_id, &join_payload, broker).await;
+        assert_eq!(join_result["type"], "join-ack");
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+        let room_code = join_result["payload"]["room_code"].as_str().unwrap().to_string();
+
+        let pair_payload = serde_json::json!({ "token": token });
+        let pair_result = registry.handle_pair(phone_id, &pair_payload, broker).await;
+        assert_eq!(pair_result["type"], "pair-ack", "phone pair should succeed");
+
+        room_code
+    }
+
+    /// Both sides confirm a single channel → player-ready is routed to both
+    /// client-D and phone-P; payload.player_id == phone-P, slot == 1 (D-08/D-09).
+    #[tokio::test]
+    async fn test_rtc_channel_ready_both_sides_fires_player_ready() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d = broker.register("client-D".to_string()).0;
+        let mut rx_p = broker.register("phone-P".to_string()).0;
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+
+        // Drain any setup events on rx_d (e.g. player-joined broadcasts — none expected
+        // since client-D is the only member when it joins, but defensive drain).
+        while rx_d.try_recv().is_ok() {}
+        while rx_p.try_recv().is_ok() {}
+
+        // Phone confirms its side.
+        let phone_payload = serde_json::json!({ "with": "client-D" });
+        registry.handle_rtc_channel_ready("phone-P", &phone_payload, &broker).await;
+
+        // No player-ready yet (desktop hasn't confirmed).
+        assert!(rx_d.try_recv().is_err(), "no player-ready while desktop side is pending");
+        assert!(rx_p.try_recv().is_err(), "no player-ready while desktop side is pending");
+
+        // Desktop confirms its side.
+        let desktop_payload = serde_json::json!({ "with": "phone-P" });
+        registry.handle_rtc_channel_ready("client-D", &desktop_payload, &broker).await;
+
+        // Both sides confirmed → player-ready must be delivered.
+        let msg_d = rx_d.try_recv().expect("client-D should receive player-ready");
+        let event_d: serde_json::Value = serde_json::from_slice(&msg_d).unwrap();
+        assert_eq!(event_d["type"], "player-ready", "desktop must receive player-ready");
+        assert_eq!(event_d["payload"]["player_id"], "phone-P", "player_id must be phone-P");
+        assert_eq!(event_d["payload"]["slot"], 1u64, "phone is paired with slot 1");
+
+        let msg_p = rx_p.try_recv().expect("phone-P should receive player-ready");
+        let event_p: serde_json::Value = serde_json::from_slice(&msg_p).unwrap();
+        assert_eq!(event_p["type"], "player-ready", "phone must receive player-ready");
+        assert_eq!(event_p["payload"]["player_id"], "phone-P");
+    }
+
+    /// Only one side confirms → no player-ready emitted (desktop side still pending).
+    #[tokio::test]
+    async fn test_rtc_channel_ready_single_side_no_player_ready() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d = broker.register("client-D".to_string()).0;
+        let mut rx_p = broker.register("phone-P".to_string()).0;
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+
+        while rx_d.try_recv().is_ok() {}
+        while rx_p.try_recv().is_ok() {}
+
+        // Only phone confirms.
+        let phone_payload = serde_json::json!({ "with": "client-D" });
+        registry.handle_rtc_channel_ready("phone-P", &phone_payload, &broker).await;
+
+        // No player-ready should be emitted.
+        assert!(rx_d.try_recv().is_err(), "no player-ready when only one side confirmed");
+        assert!(rx_p.try_recv().is_err(), "no player-ready when only one side confirmed");
+    }
+
+    /// Third redundant confirmation after both sides have confirmed does NOT
+    /// emit a second player-ready (player_ready_sent dedup guard).
+    #[tokio::test]
+    async fn test_player_ready_broadcast_once() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d = broker.register("client-D".to_string()).0;
+        let mut rx_p = broker.register("phone-P".to_string()).0;
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+
+        while rx_d.try_recv().is_ok() {}
+        while rx_p.try_recv().is_ok() {}
+
+        // Both sides confirm — triggers the first (and only) player-ready.
+        registry.handle_rtc_channel_ready("phone-P", &serde_json::json!({"with":"client-D"}), &broker).await;
+        registry.handle_rtc_channel_ready("client-D", &serde_json::json!({"with":"phone-P"}), &broker).await;
+
+        // Drain the single player-ready delivery.
+        assert!(rx_d.try_recv().is_ok(), "first player-ready must be delivered to desktop");
+        assert!(rx_p.try_recv().is_ok(), "first player-ready must be delivered to phone");
+
+        // Third redundant confirmation — dedup guard must block a second broadcast.
+        registry.handle_rtc_channel_ready("phone-P", &serde_json::json!({"with":"client-D"}), &broker).await;
+
+        assert!(rx_d.try_recv().is_err(), "no second player-ready (dedup guard)");
+        assert!(rx_p.try_recv().is_err(), "no second player-ready (dedup guard)");
+    }
+
+    /// Two desktops in room — player-ready fires only after BOTH channels are
+    /// both-sides confirmed, not after the first channel is established.
+    #[tokio::test]
+    async fn test_rtc_channel_ready_two_desktops_waits_for_all() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d1 = broker.register("client-D1".to_string()).0;
+        let mut rx_d2 = broker.register("client-D2".to_string()).0;
+        let mut rx_p  = broker.register("phone-P".to_string()).0;
+
+        // Desktop-1 creates room.
+        let join1 = serde_json::json!({"username": "Alice", "room_code": "", "game_type": "demo"});
+        let r1 = registry.handle_join("client-D1", &join1, &broker).await;
+        assert_eq!(r1["type"], "join-ack");
+        let room_code = r1["payload"]["room_code"].as_str().unwrap().to_string();
+        let pairing_url1 = r1["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token1 = pairing_url1.split("token=").nth(1).unwrap().to_string();
+
+        // Desktop-2 joins same room.
+        let join2 = serde_json::json!({"username": "Bob", "room_code": room_code, "game_type": "demo"});
+        let r2 = registry.handle_join("client-D2", &join2, &broker).await;
+        assert_eq!(r2["type"], "join-ack");
+
+        // Drain setup events (client-D1 receives player-joined for D2).
+        while rx_d1.try_recv().is_ok() {}
+        while rx_d2.try_recv().is_ok() {}
+        while rx_p.try_recv().is_ok() {}
+
+        // Phone pairs with token from slot-1 (client-D1).
+        let pair_result = registry.handle_pair("phone-P", &serde_json::json!({"token": token1}), &broker).await;
+        assert_eq!(pair_result["type"], "pair-ack");
+        // pair-ack must include both desktops in peers.
+        let peers = pair_result["payload"]["peers"].as_array().unwrap();
+        assert_eq!(peers.len(), 2, "pair-ack must include both desktops");
+
+        // Channel-1 (phone ↔ D1): phone side confirms.
+        registry.handle_rtc_channel_ready("phone-P", &serde_json::json!({"with":"client-D1"}), &broker).await;
+        // Channel-1: D1 side confirms → first channel fully open.
+        registry.handle_rtc_channel_ready("client-D1", &serde_json::json!({"with":"phone-P"}), &broker).await;
+
+        // player-ready must NOT fire yet (D2 channel still pending).
+        assert!(rx_d1.try_recv().is_err(), "no player-ready: D2 channel still pending");
+        assert!(rx_d2.try_recv().is_err(), "no player-ready: D2 channel still pending");
+        assert!(rx_p.try_recv().is_err(),  "no player-ready: D2 channel still pending");
+
+        // Channel-2 (phone ↔ D2): phone side confirms.
+        registry.handle_rtc_channel_ready("phone-P", &serde_json::json!({"with":"client-D2"}), &broker).await;
+        // Channel-2: D2 side confirms → all channels fully open.
+        registry.handle_rtc_channel_ready("client-D2", &serde_json::json!({"with":"phone-P"}), &broker).await;
+
+        // Now player-ready must be delivered to all three: D1, D2, and the phone.
+        let msg_d1 = rx_d1.try_recv().expect("client-D1 should receive player-ready");
+        let event_d1: serde_json::Value = serde_json::from_slice(&msg_d1).unwrap();
+        assert_eq!(event_d1["type"], "player-ready");
+        assert_eq!(event_d1["payload"]["player_id"], "phone-P");
+
+        let msg_d2 = rx_d2.try_recv().expect("client-D2 should receive player-ready");
+        let event_d2: serde_json::Value = serde_json::from_slice(&msg_d2).unwrap();
+        assert_eq!(event_d2["type"], "player-ready");
+
+        let msg_p = rx_p.try_recv().expect("phone-P should receive player-ready");
+        let event_p: serde_json::Value = serde_json::from_slice(&msg_p).unwrap();
+        assert_eq!(event_p["type"], "player-ready");
+        assert_eq!(event_p["payload"]["player_id"], "phone-P");
+    }
+
+    /// An unknown/consumed token returns type "pair-error" with reason "invalid_token"
+    /// (existing behavior must be preserved).
+    #[tokio::test]
+    async fn test_pair_ack_invalid_token_still_errors() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("phone-XYZ".to_string());
+
+        let pair_payload = serde_json::json!({ "token": "invalid-token-xyz" });
+        let pair_result = registry.handle_pair("phone-XYZ", &pair_payload, &broker).await;
+
+        assert_eq!(
+            pair_result["type"], "pair-error",
+            "invalid token must return pair-error"
+        );
+        assert_eq!(
+            pair_result["payload"]["reason"], "invalid_token",
+            "reason must be invalid_token"
+        );
+    }
+
+    // ── Phase 4 Plan 03: phone-state relay and peer-mesh tests (TDD RED) ────────
+
+    /// handle_phone_state(phone_id, {state:"background"}) broadcasts phone-state to
+    /// all Connected desktops in the phone's room; does NOT echo to the phone itself.
+    #[tokio::test]
+    async fn test_phone_state_relays_to_desktops() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d = broker.register("client-D".to_string()).0;
+        let mut rx_p = broker.register("phone-P".to_string()).0;
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+        while rx_d.try_recv().is_ok() {}
+        while rx_p.try_recv().is_ok() {}
+
+        let payload = serde_json::json!({ "state": "background" });
+        registry.handle_phone_state("phone-P", &payload, &broker).await;
+
+        // Desktop must receive the relayed event.
+        let msg = rx_d.try_recv().expect("desktop must receive phone-state relay");
+        let event: serde_json::Value = serde_json::from_slice(&msg).unwrap();
+        assert_eq!(event["type"], "phone-state");
+        assert_eq!(event["payload"]["state"], "background");
+
+        // Phone must NOT receive its own state back (D-18).
+        assert!(rx_p.try_recv().is_err(), "phone must not receive echo of its own state");
+    }
+
+    /// phone-state with {state:"channel-lost", with: desktop_id} preserves the `with` field.
+    #[tokio::test]
+    async fn test_phone_state_channel_lost_includes_with() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_d = broker.register("client-D".to_string()).0;
+        let _ = broker.register("phone-P".to_string());
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+        while rx_d.try_recv().is_ok() {}
+
+        let payload = serde_json::json!({ "state": "channel-lost", "with": "client-D" });
+        registry.handle_phone_state("phone-P", &payload, &broker).await;
+
+        let msg = rx_d.try_recv().expect("desktop must receive channel-lost relay");
+        let event: serde_json::Value = serde_json::from_slice(&msg).unwrap();
+        assert_eq!(event["type"], "phone-state");
+        assert_eq!(event["payload"]["state"], "channel-lost");
+        assert_eq!(event["payload"]["with"], "client-D", "`with` field must be preserved");
+    }
+
+    /// When a second desktop joins a room with a paired phone, a peer-joined envelope
+    /// is routed to the phone.
+    #[tokio::test]
+    async fn test_peer_joined_push_to_phone() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let _ = broker.register("client-D1".to_string());
+        let mut rx_p = broker.register("phone-P".to_string()).0;
+        let _ = broker.register("client-D2".to_string());
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D1", "phone-P").await;
+        while rx_p.try_recv().is_ok() {}
+
+        // Second desktop joins the same room — should push peer-joined to phone.
+        let room = {
+            // Peek at the room_code
+            registry.rooms.iter().next().map(|r| r.code.clone()).unwrap()
+        };
+        let join2 = serde_json::json!({
+            "username": "Bob", "room_code": room, "game_type": "demo"
+        });
+        registry.handle_join("client-D2", &join2, &broker).await;
+
+        // Phone must receive a peer-joined event.
+        let msg = rx_p.try_recv().expect("phone must receive peer-joined when second desktop joins");
+        let event: serde_json::Value = serde_json::from_slice(&msg).unwrap();
+        assert_eq!(event["type"], "peer-joined");
+        assert_eq!(event["payload"]["peer"]["id"], "client-D2");
+    }
+
+    /// When a desktop disconnects from a room with a paired phone, a peer-left envelope
+    /// is routed to the phone.
+    #[tokio::test]
+    async fn test_peer_left_push_to_phone() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+
+        let mut rx_p = broker.register("phone-P".to_string()).0;
+        let _ = broker.register("client-D".to_string());
+
+        setup_one_desktop_one_phone(&registry, &broker, "client-D", "phone-P").await;
+        while rx_p.try_recv().is_ok() {}
+
+        // Desktop disconnects — should push peer-left to phone.
+        registry.on_client_disconnect("client-D", &broker).await;
+
+        let msg = rx_p.try_recv().expect("phone must receive peer-left when desktop disconnects");
+        let event: serde_json::Value = serde_json::from_slice(&msg).unwrap();
+        assert_eq!(event["type"], "peer-left");
+        assert_eq!(event["payload"]["peer_id"], "client-D");
+    }
+
+    // ── Phase 4 Plan 03: heartbeat tests (TDD RED) ─────────────────────────────
+
+    /// After a desktop joins and a phone pairs, handle_heartbeat(phone_id)
+    /// sets that slot's last_heartbeat to Some(_).
+    #[tokio::test]
+    async fn test_heartbeat_updates_last_heartbeat() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("client-D".to_string());
+        let _ = broker.register("phone-H".to_string());
+
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+        let room_code = join_result["payload"]["room_code"].as_str().unwrap().to_string();
+
+        let pair_payload = serde_json::json!({ "token": token });
+        let pair_result = registry.handle_pair("phone-H", &pair_payload, &broker).await;
+        assert_eq!(pair_result["type"], "pair-ack");
+
+        // Before heartbeat: last_heartbeat should be None
+        {
+            let room = registry.rooms.get(&room_code).unwrap();
+            let slot = room.slots[0].as_ref().unwrap();
+            assert!(slot.last_heartbeat.is_none(), "last_heartbeat must be None before first heartbeat");
+        }
+
+        // After heartbeat
+        registry.handle_heartbeat("phone-H");
+
+        // last_heartbeat must now be Some(_)
+        {
+            let room = registry.rooms.get(&room_code).unwrap();
+            let slot = room.slots[0].as_ref().unwrap();
+            assert!(slot.last_heartbeat.is_some(), "last_heartbeat must be Some after handle_heartbeat");
+        }
+    }
+
+    /// A slot whose last_heartbeat is older than timeout appears in phones_missing_heartbeat;
+    /// a slot heartbeated recently does not.
+    #[tokio::test]
+    async fn test_phones_missing_heartbeat_flags_stale() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let _ = broker.register("client-D".to_string());
+        let _ = broker.register("phone-H".to_string());
+
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+        let room_code = join_result["payload"]["room_code"].as_str().unwrap().to_string();
+
+        let pair_payload = serde_json::json!({ "token": token });
+        registry.handle_pair("phone-H", &pair_payload, &broker).await;
+
+        // Manually set an old last_heartbeat (2 minutes ago) in the slot.
+        {
+            let mut room = registry.rooms.get_mut(&room_code).unwrap();
+            let slot = room.slots[0].as_mut().unwrap();
+            slot.last_heartbeat = Some(std::time::Instant::now() - std::time::Duration::from_secs(120));
+        }
+
+        // A 65-second timeout — our 120s old heartbeat is stale.
+        let stale = registry.phones_missing_heartbeat(std::time::Duration::from_secs(65));
+        assert!(!stale.is_empty(), "stale slot must be reported");
+        assert_eq!(stale[0].3, "phone-H", "stale entry must be phone-H");
+
+        // Recent heartbeat — not stale.
+        registry.handle_heartbeat("phone-H");
+        let fresh = registry.phones_missing_heartbeat(std::time::Duration::from_secs(65));
+        assert!(fresh.is_empty(), "freshly heartbeated slot must not appear in missing list");
+    }
+
+    /// handle_heartbeat_miss sets the slot Disconnected and broadcasts a phone-state
+    /// heartbeat-miss envelope to room desktops; the slot is held (not removed).
+    #[tokio::test]
+    async fn test_heartbeat_miss_marks_disconnected() {
+        let registry = make_registry();
+        let broker = SignalingBroker::new();
+        let mut rx_d = broker.register("client-D".to_string()).0;
+        let _ = broker.register("phone-H".to_string());
+
+        let join_payload = serde_json::json!({
+            "username": "Alice", "room_code": "", "game_type": "demo"
+        });
+        let join_result = registry.handle_join("client-D", &join_payload, &broker).await;
+        let pairing_url = join_result["payload"]["pairing_url"].as_str().unwrap().to_string();
+        let token = pairing_url.split("token=").nth(1).unwrap().to_string();
+        let room_code = join_result["payload"]["room_code"].as_str().unwrap().to_string();
+        let slot_id = join_result["payload"]["slot"].as_u64().unwrap() as u8;
+
+        let pair_payload = serde_json::json!({ "token": token });
+        registry.handle_pair("phone-H", &pair_payload, &broker).await;
+
+        // Drain setup events on desktop.
+        while rx_d.try_recv().is_ok() {}
+
+        // Simulate heartbeat miss.
+        registry.handle_heartbeat_miss(&room_code, slot_id, &broker).await;
+
+        // Slot must be Disconnected (not removed — hold window kept).
+        {
+            let room = registry.rooms.get(&room_code).unwrap();
+            let slot = room.slots[(slot_id - 1) as usize].as_ref()
+                .expect("slot must still exist (hold, not evicted)");
+            assert_eq!(slot.status, SlotStatus::Disconnected, "slot must be Disconnected after miss");
+        }
+
+        // Desktop must receive a phone-state / heartbeat-miss message.
+        let msg = rx_d.try_recv().expect("desktop must receive heartbeat-miss notification");
+        let event: serde_json::Value = serde_json::from_slice(&msg).unwrap();
+        assert_eq!(event["type"], "phone-state", "type must be phone-state");
+        assert_eq!(event["payload"]["state"], "heartbeat-miss", "state must be heartbeat-miss");
+    }
+
+    /// handle_heartbeat for an unknown phone_client_id does not panic.
+    #[tokio::test]
+    async fn test_heartbeat_unknown_phone_is_noop() {
+        let registry = make_registry();
+        // Should not panic — just logs a warning.
+        registry.handle_heartbeat("no-such-phone");
+    }
+
     /// Lifecycle broadcast: desktop B disconnects; desktop A receives player-disconnected event.
     #[tokio::test]
     async fn test_lifecycle_broadcast() {
@@ -945,7 +2248,7 @@ mod tests {
         let broker = SignalingBroker::new();
 
         // Register both clients and capture A's receiver.
-        let mut rx_a = broker.register("client-A".to_string()).unwrap();
+        let mut rx_a = broker.register("client-A".to_string()).0;
         let _ = broker.register("client-B".to_string());
 
         // Both join.
