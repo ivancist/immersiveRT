@@ -6,14 +6,14 @@ current_phase: 06
 current_phase_name: desktop-receive-decode-and-rendering
 status: executing
 stopped_at: Phase 06 UI-SPEC approved
-last_updated: "2026-07-10T00:04:00.407Z"
-last_activity: 2026-07-09
-last_activity_desc: Phase 05 UAT complete and verified
+last_updated: "2026-07-10T08:32:48.459Z"
+last_activity: 2026-07-10
+last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 8
   completed_phases: 5
-  total_plans: 22
-  completed_plans: 22
+  total_plans: 27
+  completed_plans: 23
   percent: 63
 ---
 
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 ## Current Position
 
-Phase: 06 (desktop-receive-decode-and-rendering) — NEXT
-Status: Ready to execute
-Last activity: 2026-07-09 — Phase 05 UAT complete and verified
+Phase: 06 (desktop-receive-decode-and-rendering) — EXECUTING
+Status: Executing Phase 06
+Last activity: 2026-07-10 — Phase 06 execution started
 
 Progress: [█████████░] 91%
 
@@ -125,6 +125,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 5 Plan 06: requestWakeLock + startHeartbeat moved to runCalibration callback — fire when active view shows, not before calibration
 - [Phase ?]: Phase 5 Plan 07: POSITION_MAX=100m bounds Kalman drift
 - [Phase ?]: Phase 5 Plan 07: attachTouchListeners idempotent behind touchListenersAttached + named handlers — no listener leak on session reconnect (T-05-17)
+- [Phase ?]: .planning/phases/06-desktop-receive-decode-and-rendering/06-01-SUMMARY.md
+- [Phase ?]: .planning/phases/06-desktop-receive-decode-and-rendering/06-01-SUMMARY.md
 
 ### Pending Todos
 
@@ -151,6 +153,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-09T23:33:06.810Z
+Last session: 2026-07-10T08:32:44.654Z
 Stopped at: Phase 06 UI-SPEC approved
 Resume file: .planning/phases/06-desktop-receive-decode-and-rendering/06-UI-SPEC.md

@@ -45,7 +45,7 @@
 
 ### Desktop Client
 
-- [ ] **DESK-01**: Desktop connects to the server via WebTransport (persistent connection for signaling and game state)
+- [x] **DESK-01**: Desktop connects to the server via WebTransport (persistent connection for signaling and game state)
 - [ ] **DESK-02**: Desktop establishes a WebRTC P2P unreliable data channel to its paired phone (primary sensor input) and accepts WebRTC connections from all other players' phones (cross-player sensor input) — no desktop-to-desktop relay
 - [ ] **DESK-03**: Desktop decodes incoming binary sensor packets from all connected phones, drops out-of-order packets via uint16 sequence number comparison per-sender
 - [ ] **DESK-04**: Desktop maintains a per-player target-state store (latest orientation, gestureDisplacement, deadReckoningPosition, touch) updated on every packet receipt
@@ -136,7 +136,7 @@
 | SENS-06 | Phase 5 | Complete |
 | PHONE-04 | Phase 5 | Complete |
 | PHONE-05 | Phase 5 | Complete |
-| DESK-01 | Phase 6 | Pending |
+| DESK-01 | Phase 6 | Complete |
 | DESK-02 | Phase 6 | Pending |
 | DESK-03 | Phase 6 | Pending |
 | DESK-04 | Phase 6 | Pending |
