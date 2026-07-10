@@ -48,6 +48,15 @@ interface TrailHandle {
 //   plan 04: adds label, axes
 //   plan 05: adds trail, slot, username
 // ──────────────────────────────────────────────────────────────────────────────
+// Per-player position offset snapshot — recorded on R-key reset (Fix D).
+// dx/dy/dz in SensorPacket are ABSOLUTE accumulated displacement since last ZUPT reset,
+// not per-packet deltas. Zeroing the store is immediately overwritten by the next packet.
+// Solution: subtract a recorded offset so the effective position = (state - offset).
+interface PositionOffset {
+  dx: number; dy: number; dz: number; // gesture mode offset
+  px: number; py: number; pz: number; // dead-reckoning offset
+}
+
 export interface PlayerObject {
   mesh: THREE.Mesh;
   label: CSS2DObject;
@@ -55,6 +64,7 @@ export interface PlayerObject {
   trail: TrailHandle;
   slot: number;
   username: string;
+  positionOffset: PositionOffset; // Fix D: subtracted from state values each frame
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -161,14 +171,34 @@ function updateScene(): void {
     );
 
     // (b) Update position from active mode (D-13).
-    // X is negated to align phone IMU device-X with Three.js world-X (Fix 7):
-    // Moving the phone to the right should move the box right in the scene.
-    // The phone's accelerometer X axis is positive toward the device's left edge
-    // (when held portrait facing user), so negate to match world right = +X.
+    //
+    // Axis mapping — device frame (DeviceMotion) → Three.js world frame:
+    //   Device X (right, horizontal)    → Three.js -X  (negated: Fix 7)
+    //   Device Y (toward top of phone,  → Three.js -Z  (into scene when pushing forward)
+    //             horizontal when flat)
+    //   Device Z (out of screen,        → Three.js +Y  (up when phone is flat face-up)
+    //             up when phone flat)
+    //
+    // Verified against user report (Fix C): "move phone forward → cube goes UP,
+    // pick phone up → cube goes FORWARD." Previous mapping was set(-dx, dy, dz)
+    // which incorrectly put device-Y (forward) into Three.js Y (up) and device-Z
+    // (up) into Three.js Z (toward viewer). Correct: set(-dx, dz, -dy).
+    //
+    // Fix D: dx/dy/dz are ABSOLUTE accumulated displacement (not per-packet deltas).
+    // The store is NOT zeroed on R-key reset — it is overwritten immediately by the
+    // next packet. Instead, a positionOffset is recorded at reset time and subtracted
+    // here every frame so the effective position starts at origin after reset.
+    const off = obj.positionOffset;
     if (positionMode === 'gesture') {
-      obj.mesh.position.set(-state.dx, state.dy, state.dz);
+      const rdx = state.dx - off.dx;
+      const rdy = state.dy - off.dy;
+      const rdz = state.dz - off.dz;
+      obj.mesh.position.set(-rdx, rdz, -rdy);
     } else {
-      obj.mesh.position.set(-state.px, state.py, state.pz);
+      const rpx = state.px - off.px;
+      const rpy = state.py - off.py;
+      const rpz = state.pz - off.pz;
+      obj.mesh.position.set(-rpx, rpz, -rpy);
     }
 
     // (c) Touch flash — D-14: live per-frame emissive tracking.
@@ -351,7 +381,10 @@ export function addPlayerToScene(phoneId: string, slot: number, username: string
   trail.line.visible = trailVisible; // Pitfall 4: .visible matches current state
   scene.add(trail.line); // trail is a sibling of mesh in the scene (not a child)
 
-  playerObjects.set(phoneId, { mesh, label, axes, trail, slot, username });
+  playerObjects.set(phoneId, {
+    mesh, label, axes, trail, slot, username,
+    positionOffset: { dx: 0, dy: 0, dz: 0, px: 0, py: 0, pz: 0 }, // Fix D
+  });
 }
 
 /**
@@ -445,24 +478,28 @@ export function toggleNumericHud(): void {
  */
 export function resetAllPlayerPositions(): void {
   for (const [phoneId, obj] of playerObjects) {
-    // Snap scene mesh to origin immediately (visible before next sensor packet arrives)
+    // Snap scene mesh to origin immediately (visual feedback before next packet)
     obj.mesh.position.set(0, 0, 0);
 
-    // Zero position fields in the target-state store so the interpolation loop
-    // reads (0,0,0) until a new sensor packet updates them
+    // Fix D: dx/dy/dz are ABSOLUTE accumulated values — zeroing the store is
+    // overwritten immediately by the next packet. Record current values as offset;
+    // updateScene() subtracts offset each frame so effective position starts at 0.
     const state = targetStateStore.get(phoneId);
     if (state) {
-      state.dx = 0; state.dy = 0; state.dz = 0;
-      state.px = 0; state.py = 0; state.pz = 0;
+      obj.positionOffset.dx = state.dx;
+      obj.positionOffset.dy = state.dy;
+      obj.positionOffset.dz = state.dz;
+      obj.positionOffset.px = state.px;
+      obj.positionOffset.py = state.py;
+      obj.positionOffset.pz = state.pz;
     }
 
-    // Clear trail ring buffer: fill positions array with 0 and flag geometry dirty.
-    // head reset to 0 so the ring-buffer write pointer starts fresh from position[0].
+    // Clear trail ring buffer (no allocation — fills existing Float32Array, Pitfall 6).
     obj.trail.positions.fill(0);
     obj.trail.head = 0;
     (obj.trail.line.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
   }
-  console.log('[scene] resetAllPlayerPositions — zeroed ' + playerObjects.size + ' player(s)');
+  console.log('[scene] resetAllPlayerPositions — offset recorded for ' + playerObjects.size + ' player(s)');
 }
 
 /**

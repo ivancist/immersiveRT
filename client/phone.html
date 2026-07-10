@@ -26,6 +26,10 @@
     ────────────────────────────────────────── */
     *, *::before, *::after {
       box-sizing: border-box;
+      /* Fix A: disable text selection and iOS touch callout on all phone touch surfaces */
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
     }
 
     body {

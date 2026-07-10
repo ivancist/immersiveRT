@@ -504,12 +504,45 @@ impl RoomRegistry {
         }
         // DashMap RefMut dropped here.
 
-        // Clear player_ready_sent and channel_ready so WebRTC can re-handshake if
-        // channels closed during the transport gap (phone reconnects only — these maps
-        // are keyed by phone_client_id).
+        // Clear player_ready_sent and channel_ready so WebRTC can re-handshake after
+        // a transport gap.
+        //
+        // Phone reconnect: clear by phone_client_id (key is phone_client_id).
+        // Desktop reconnect: the phone did NOT disconnect, so its phone_client_id key
+        //   is still in player_ready_sent from the original session. Clearing it allows
+        //   the phone to re-establish WebRTC with the new desktop client_id and receive
+        //   a fresh player-ready. Without this, handle_rtc_channel_ready returns early
+        //   on the dedup guard and the desktop never gets player-ready after reload.
         if is_phone {
             self.player_ready_sent.remove(&(room_code.clone(), client_id.to_string()));
             self.channel_ready.retain(|k, _| !(k.0 == room_code && k.1 == client_id));
+        } else {
+            // Desktop reconnect: clear dedup guard for the phone paired to this slot,
+            // then send peer-joined to the phone so it re-initiates WebRTC with the
+            // new desktop client_id. Without peer-joined the phone never re-offers.
+            let phone_client_id_opt: Option<String> = self.rooms.get(&room_code)
+                .and_then(|r| {
+                    r.slots.get((slot_id - 1) as usize)
+                        .and_then(|s| s.as_ref()?.phone_client_id.clone())
+                });
+            if let Some(ref phone_id) = phone_client_id_opt {
+                // Clear the per-phone player_ready_sent entry keyed by phone_client_id.
+                self.player_ready_sent.remove(&(room_code.clone(), phone_id.clone()));
+                self.channel_ready.retain(|k, _| !(k.0 == room_code && k.1 == phone_id.as_str()));
+            }
+            // Notify the phone that a new desktop peer has joined so it calls
+            // openChannelToPeer(client_id) and sends a fresh WebRTC offer.
+            let peer_joined_bytes = serde_json::to_vec(&serde_json::json!({
+                "type": "peer-joined",
+                "payload": {
+                    "peer": {
+                        "id": client_id,
+                        "slot": slot_id
+                    }
+                }
+            }))
+            .unwrap_or_default();
+            self.route_to_phone(&room_code, peer_joined_bytes, broker);
         }
 
         // Generate fresh reconnect_token and pairing_url (D-17).

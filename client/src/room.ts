@@ -220,7 +220,7 @@ function updateHud(): void {
       'A:' + (states.axesVisible       ? 'on' : 'off') + '  ' +
       'H:' + (states.numericHudVisible ? 'on' : 'off') + '  ' +
       'T:' + (states.trailVisible      ? 'on' : 'off') + '  ' +
-      'R:reset';
+      'R:reset  Esc:leave';
   }
 }
 
@@ -307,7 +307,7 @@ function renderTabRoster(): void {
 // Game keyboard handler (plan 05 — UI-SPEC Keyboard Interaction Contract)
 //
 // Active only when game view is visible (gameViewShown guard).
-// keydown: P/G/A/H/T/R toggle scene state; Tab shows roster overlay.
+// keydown: P/G/A/H/T/R toggle scene state; Esc leaves game view; Tab shows roster overlay.
 // keyup: Tab hides roster overlay.
 // Attached once via attachGameKeyListeners() idempotency guard.
 // ──────────────────────────────────────────────────────────────────────────────
@@ -349,6 +349,15 @@ function attachGameKeyListeners(): void {
       case 'r':
         // Reset all player positions to origin — dead-reckoning drift reset (CLAUDE.md constraint)
         resetAllPlayerPositions();
+        break;
+      case 'escape':
+        // Fix F: Esc key leaves game view and returns to lobby.
+        // Clears prPhones_ sessionStorage sentinel so the next join shows QR (not game view).
+        if (currentRoom) {
+          sessionStorage.removeItem('prPhones_' + currentRoom.room_code);
+        }
+        playerReadyPhones.clear();
+        leaveRoom();
         break;
       case 'tab':
         // Show TAB roster overlay while held; preventDefault stops browser focus-cycling (T-06-13)
@@ -684,8 +693,23 @@ function handleOffer(msg: Record<string, unknown>): void {
     dc.onopen = function () {
       console.info('[WebRTC] data channel open phone=' + tag + ' binaryType=' + dc.binaryType);
       sendMessage('rtc-channel-ready', { with: phoneId });
-      // Update HUD so connected count reflects the newly-open channel
-      if (gameViewShown) { updateHud(); }
+      if (gameViewShown) {
+        // Update HUD connected count (desktopChannels.size already includes this channel).
+        updateHud();
+
+        // Fix E: On desktop reload, server's player_ready_sent dedup guard may prevent
+        // a new player-ready from firing. Server now sends peer-joined on desktop reconnect
+        // (server fix in room_registry.rs) and clears the dedup guard, so player-ready
+        // will arrive again. But as a client-side safety net: if game view is already shown
+        // and this phoneId is not yet in the scene, add a placeholder box immediately.
+        // When player-ready arrives (moments later), addPlayerToScene is idempotent — it
+        // skips re-adding an already-registered phoneId (line: if playerObjects.has).
+        if (!phoneSlots.has(phoneId)) {
+          const assignedSlot = nextSceneSlot <= 8 ? nextSceneSlot++ : 8;
+          phoneSlots.set(phoneId, assignedSlot);
+          addPlayerToScene(phoneId, assignedSlot, 'Slot ' + assignedSlot);
+        }
+      }
     };
 
     dc.onclose = function () {

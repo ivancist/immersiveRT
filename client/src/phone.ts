@@ -1170,4 +1170,13 @@ document.addEventListener('DOMContentLoaded', function() {
   phoneLog('loaded');
   attachGrantButton();
   showView('view-permission');
+
+  // Fix B: attempt portrait orientation lock so the phone page doesn't rotate
+  // mid-session. Best-effort — iOS Safari does not support screen.orientation.lock
+  // and will silently reject. All browsers are expected to ignore failures.
+  if (screen.orientation && typeof (screen.orientation as ScreenOrientation & { lock?: (type: string) => Promise<void> }).lock === 'function') {
+    (screen.orientation as ScreenOrientation & { lock: (type: string) => Promise<void> })
+      .lock('portrait')
+      .catch(function() { /* silently ignore: iOS / unsupported browsers */ });
+  }
 });
