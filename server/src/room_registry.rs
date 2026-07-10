@@ -941,7 +941,7 @@ impl RoomRegistry {
     /// Explicit player leave: immediately release the slot and broadcast player-left.
     /// Unlike on_client_disconnect, no hold timer is started — the leave is intentional.
     pub async fn handle_leave(&self, client_id: &str, broker: &SignalingBroker) {
-        let found: Option<(RoomCode, SlotId, String)> = {
+        let found: Option<(RoomCode, SlotId, String, Option<String>)> = {
             let mut found = None;
             'outer: for mut room_ref in self.rooms.iter_mut() {
                 let code = room_ref.code.clone();
@@ -950,8 +950,9 @@ impl RoomRegistry {
                         if info.client_id == client_id {
                             let slot_id = (idx + 1) as u8;
                             let username = info.username.clone();
+                            let phone_id = info.phone_client_id.clone();
                             *slot = None;
-                            found = Some((code, slot_id, username));
+                            found = Some((code, slot_id, username, phone_id));
                             break 'outer;
                         }
                     }
@@ -960,7 +961,7 @@ impl RoomRegistry {
             found
         };
 
-        let (room_code, slot_id, username) = match found {
+        let (room_code, slot_id, username, phone_client_id) = match found {
             Some(v) => v,
             None => {
                 tracing::debug!(client_id = %client_id, "leave-room: client not in any room");
@@ -989,12 +990,17 @@ impl RoomRegistry {
 
         // Push peer-left to the phone (D-07) on explicit leave.
         // reason=leave: intentional — phone resets calibration and shows view-ended.
-        let peer_left_bytes = serde_json::to_vec(&serde_json::json!({
-            "type": "peer-left",
-            "payload": { "peer_id": client_id, "reason": "leave" }
-        }))
-        .unwrap_or_default();
-        self.route_to_phone(&room_code, peer_left_bytes, broker);
+        // phone_client_id captured before slot was set to None — route_to_phone would find no slot.
+        if let Some(phone_id) = phone_client_id {
+            let peer_left_bytes = serde_json::to_vec(&serde_json::json!({
+                "type": "peer-left",
+                "payload": { "peer_id": client_id, "reason": "leave" }
+            }))
+            .unwrap_or_default();
+            if !broker.route(&phone_id, peer_left_bytes) {
+                tracing::warn!(phone_id = %phone_id, "handle_leave: phone not connected, peer-left not delivered");
+            }
+        }
 
         tracing::info!(
             room_code = %room_code, slot_id = %slot_id,
