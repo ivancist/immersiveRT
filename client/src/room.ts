@@ -46,6 +46,10 @@ const DEBUG_FORCE_RELAY = false;
 // ──────────────────────────────────────────────────────────────────────────────
 let transport: WebTransport | null = null;
 let useWt = false;
+// Stored so createRoom/joinRoom can await it if WT is still connecting when the
+// user clicks a button (prevents the join-room from falling into the WS pending
+// queue which is never flushed once WT takes over — Bug A).
+let wtConnectPromise: Promise<boolean> | null = null;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -201,6 +205,8 @@ function setupTransportClosedHandler(t: WebTransport): void {
 }
 
 async function connectDesktopWT(): Promise<boolean> {
+  // Idempotency guard: already connected — return immediately without a second transport.
+  if (useWt && transport) { return true; }
   if (typeof WebTransport === 'undefined') { return false; }
   const wtUrl = 'https://' + location.hostname + ':4433';
   try {
@@ -486,7 +492,10 @@ function handlePlayerReady(msg: Record<string, unknown>): void {
 function initDesktopPage(): void {
   // Connect WT-first (D-01); fall back to WS if QUIC is unavailable or blocked (D-02).
   // Do NOT call connectWS here unconditionally — once useWt is true, WS must not open (D-03).
-  connectDesktopWT().then(function(ok) { if (!ok) connectWS(null); });
+  // Store the promise in wtConnectPromise so createRoom/joinRoom can await it if the user
+  // clicks a button while WT is still in the QUIC handshake (Bug A — race condition fix).
+  wtConnectPromise = connectDesktopWT();
+  wtConnectPromise.then(function(ok) { if (!ok) connectWS(null); });
 
   // Button wiring
   const btnCreate    = document.getElementById('btn-create-room');
@@ -573,7 +582,10 @@ function initDesktopPage(): void {
       renderRoomPage(slotNum, codeFromPath, null);
       // Only reconnect when already on the room path (D-17).
       // WT-first: if WT connected, sendReconnect uses sendWtRequest; else fall back to WS.
-      connectDesktopWT().then(function(ok) {
+      // IMPORTANT: reuse wtConnectPromise (started above) — do NOT call connectDesktopWT()
+      // again here. A second call creates a new transport, overwrites myId with a fresh UUID,
+      // and the server rejects the join-room because from !== registered_id (Bug B fix).
+      wtConnectPromise!.then(function(ok) {
         if (ok) {
           sendReconnect(codeFromPath, slotNum);
         } else {
@@ -609,6 +621,14 @@ async function createRoom(gameType: string): Promise<void> {
 
   disableButton('btn-continue', 'Creating...');
   pendingUsername = rawName;
+
+  // Bug A fix: if WT is still connecting (QUIC handshake / register in progress) and WS
+  // is not yet open, wait for the connection attempt to finish before choosing the path.
+  // Without this, a user who clicks quickly gets a WS pending-queue message that is never
+  // flushed (WS never opens once WT succeeds).
+  if (wtConnectPromise && !useWt && !(ws && ws.readyState === WebSocket.OPEN)) {
+    await wtConnectPromise;
+  }
 
   if (useWt && transport) {
     // WT path: request/response (join-room → join-ack or join-error in one round-trip).
@@ -676,6 +696,11 @@ async function joinRoom(roomCode: string, username: string): Promise<void> {
 
   pendingUsername = cleanUsername;
   disableButton('btn-join-submit', 'Joining...');
+
+  // Bug A fix: same guard as createRoom — wait for WT if still connecting.
+  if (wtConnectPromise && !useWt && !(ws && ws.readyState === WebSocket.OPEN)) {
+    await wtConnectPromise;
+  }
 
   if (useWt && transport) {
     // WT path: request/response (join-room → join-ack or join-error in one round-trip).
