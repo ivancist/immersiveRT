@@ -7,6 +7,9 @@
 // Marks this file as an ES module (prevents global-scope collision with phone.ts).
 export {};
 
+// Three.js scene lifecycle — plan 03 (initScene, stubs) + plan 04 (addPlayer, removePlayer)
+import { initScene, addPlayerToScene, removePlayerFromScene } from './scene';
+
 // Ambient declaration for the QRCode CDN global (qrcode@1.4.4 via jsdelivr).
 // Only the shape that room.ts actually calls is typed here.
 declare const QRCode: {
@@ -51,6 +54,9 @@ let useWt = false;
 // queue which is never flushed once WT takes over — Bug A).
 let wtConnectPromise: Promise<boolean> | null = null;
 
+// Guard: first player-ready triggers game view; subsequent ones only add players.
+let gameViewShown = false;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
@@ -61,6 +67,25 @@ function showView(id: string): void {
   views.forEach(function (v) { v.hidden = true; });
   const target = document.getElementById(id);
   if (target) { target.hidden = false; }
+}
+
+/**
+ * Transition from the room UI into the full-viewport game view (D-04, D-05).
+ * Hides all room/lobby/phone panels and reveals #game-container + #game-hud.
+ * Called once on the first player-ready event, guarded by gameViewShown.
+ */
+function showGameView(): void {
+  // Hide all views using the [hidden] attribute
+  const views = document.querySelectorAll<HTMLElement>(
+    '#view-lobby, #view-room, #view-phone'
+  );
+  views.forEach(function (v) { v.hidden = true; });
+
+  // Show game container and persistent HUD (remove inline display:none)
+  const gameContainer = document.getElementById('game-container');
+  const gameHud = document.getElementById('game-hud');
+  if (gameContainer) { gameContainer.style.display = 'block'; }
+  if (gameHud) { gameHud.style.display = 'block'; }
 }
 
 function showError(elementId: string, message: string): void {
@@ -482,8 +507,27 @@ function handleIceCandidate(msg: Record<string, unknown>): void {
 
 function handlePlayerReady(msg: Record<string, unknown>): void {
   const payload = (msg && msg.payload) ? msg.payload as Record<string, unknown> : {};
+  const slot = (payload.slot as number) || 0;
+  const username = (payload.username as string) || '';
+  const phoneId = typeof msg.from === 'string' ? msg.from : '';
   console.info('[WebRTC] player-ready received:', payload);
-  appendEventLog('player-ready', (payload.slot as number) || 0, (payload.username as string) || '');
+  appendEventLog('player-ready', slot, username);
+
+  // First player-ready: show game view and init the 3D scene (guarded — D-04, D-05)
+  if (!gameViewShown) {
+    gameViewShown = true;
+    showGameView();
+    const canvas = document.getElementById('game-canvas') as HTMLCanvasElement | null;
+    const container = document.getElementById('game-container') as HTMLElement | null;
+    if (canvas && container) {
+      initScene(canvas, container);
+    }
+  }
+
+  // Add the player's 3D object to the scene (no-op stub in plan 03; filled in plan 04)
+  if (phoneId) {
+    addPlayerToScene(phoneId, slot, username);
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
