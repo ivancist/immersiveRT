@@ -296,23 +296,28 @@ function connectWS(onOpenCallback: (() => void) | null): void {
   };
 }
 
-function sendMessage(type: string, payload: Record<string, unknown>): void {
-  const msg = JSON.stringify({ type: type, from: myId, to: '', payload: payload });
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(msg);
+// Transport-agnostic fire-and-forget send (D-03: single active transport at a time).
+// When useWt: sends via sendWtMessage (WT bidi stream); else falls back to WS with
+// the existing pending-queue behaviour.
+function signalSend(type: string, to: string, payload: Record<string, unknown>): void {
+  if (useWt && transport) {
+    sendWtMessage(transport, { type: type, from: myId ?? '', to: to || '', payload: payload });
   } else {
-    // Queue for when connection is ready
-    pendingMessageQueue.push(msg);
+    const msg = JSON.stringify({ type: type, from: myId, to: to || '', payload: payload });
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(msg);
+    } else {
+      pendingMessageQueue.push(msg);
+    }
   }
 }
 
+function sendMessage(type: string, payload: Record<string, unknown>): void {
+  signalSend(type, '', payload);
+}
+
 function sendTo(type: string, to: string, payload: unknown): void {
-  const msg = JSON.stringify({ type: type, from: myId, to: to, payload: payload });
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(msg);
-  } else {
-    pendingMessageQueue.push(msg);
-  }
+  signalSend(type, to, payload as Record<string, unknown>);
 }
 
 function updateConnectionStatus(text: string): void {
@@ -479,8 +484,9 @@ function handlePlayerReady(msg: Record<string, unknown>): void {
 // Desktop page
 // ──────────────────────────────────────────────────────────────────────────────
 function initDesktopPage(): void {
-  // Pre-warm WS connection (D-11)
-  connectWS(null);
+  // Connect WT-first (D-01); fall back to WS if QUIC is unavailable or blocked (D-02).
+  // Do NOT call connectWS here unconditionally — once useWt is true, WS must not open (D-03).
+  connectDesktopWT().then(function(ok) { if (!ok) connectWS(null); });
 
   // Button wiring
   const btnCreate    = document.getElementById('btn-create-room');
@@ -565,8 +571,15 @@ function initDesktopPage(): void {
       const slotNum = parseInt(storedSlot, 10);
       currentRoom = { slot: slotNum, room_code: codeFromPath };
       renderRoomPage(slotNum, codeFromPath, null);
-      // Only reconnect when already on the room path (D-17)
-      connectWS(function () { sendReconnect(codeFromPath, slotNum); });
+      // Only reconnect when already on the room path (D-17).
+      // WT-first: if WT connected, sendReconnect uses sendWtRequest; else fall back to WS.
+      connectDesktopWT().then(function(ok) {
+        if (ok) {
+          sendReconnect(codeFromPath, slotNum);
+        } else {
+          connectWS(function () { sendReconnect(codeFromPath, slotNum); });
+        }
+      });
     } else {
       // On /room/ path but no session data — show join form pre-filled with the code.
       history.replaceState(null, '', '/');
@@ -577,7 +590,7 @@ function initDesktopPage(): void {
   }
 }
 
-function createRoom(gameType: string): void {
+async function createRoom(gameType: string): Promise<void> {
   const userEl = document.getElementById('input-create-username') as HTMLInputElement | null;
   const rawName = userEl ? userEl.value.trim() : '';
 
@@ -596,14 +609,36 @@ function createRoom(gameType: string): void {
 
   disableButton('btn-continue', 'Creating...');
   pendingUsername = rawName;
-  sendMessage('join-room', {
-    username: rawName,
-    room_code: '',
-    game_type: gameType
-  });
+
+  if (useWt && transport) {
+    // WT path: request/response (join-room → join-ack or join-error in one round-trip).
+    try {
+      const resp = await sendWtRequest(transport, {
+        type: 'join-room', from: myId ?? '', to: '',
+        payload: { username: rawName, room_code: '', game_type: gameType }
+      });
+      if (resp.type === 'join-ack') {
+        handleJoinAck(resp.payload as Record<string, unknown>);
+      } else if (resp.type === 'join-error') {
+        handleJoinError(((resp.payload as Record<string, unknown>)?.reason) as string);
+      } else {
+        enableButton('btn-continue', 'Continue');
+      }
+    } catch (err) {
+      console.warn('[WT] createRoom request failed:', err);
+      enableButton('btn-continue', 'Continue');
+    }
+  } else {
+    // WS path: fire-and-forget; response arrives asynchronously via onServerMessage.
+    sendMessage('join-room', {
+      username: rawName,
+      room_code: '',
+      game_type: gameType
+    });
+  }
 }
 
-function joinRoom(roomCode: string, username: string): void {
+async function joinRoom(roomCode: string, username: string): Promise<void> {
   // Client-side validation
   let valid = true;
 
@@ -641,11 +676,33 @@ function joinRoom(roomCode: string, username: string): void {
 
   pendingUsername = cleanUsername;
   disableButton('btn-join-submit', 'Joining...');
-  sendMessage('join-room', {
-    username: cleanUsername,
-    room_code: cleanCode,
-    game_type: 'placeholder'
-  });
+
+  if (useWt && transport) {
+    // WT path: request/response (join-room → join-ack or join-error in one round-trip).
+    try {
+      const resp = await sendWtRequest(transport, {
+        type: 'join-room', from: myId ?? '', to: '',
+        payload: { username: cleanUsername, room_code: cleanCode, game_type: 'placeholder' }
+      });
+      if (resp.type === 'join-ack') {
+        handleJoinAck(resp.payload as Record<string, unknown>);
+      } else if (resp.type === 'join-error') {
+        handleJoinError(((resp.payload as Record<string, unknown>)?.reason) as string);
+      } else {
+        enableButton('btn-join-submit', 'Join Room');
+      }
+    } catch (err) {
+      console.warn('[WT] joinRoom request failed:', err);
+      enableButton('btn-join-submit', 'Join Room');
+    }
+  } else {
+    // WS path: fire-and-forget; response arrives asynchronously via onServerMessage.
+    sendMessage('join-room', {
+      username: cleanUsername,
+      room_code: cleanCode,
+      game_type: 'placeholder'
+    });
+  }
 }
 
 function handleJoinAck(payload: Record<string, unknown>): void {
@@ -966,8 +1023,11 @@ function leaveRoom(): void {
   history.pushState(null, '', '/');
   showView('view-lobby');
   showLobbyActions();
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    // Send leave-room and keep the WS open — server frees the slot immediately.
+  if (useWt && transport) {
+    // WT path: fire-and-forget leave-room; transport stays open for the next join (D-03).
+    sendWtMessage(transport, { type: 'leave-room', from: myId ?? '', to: '', payload: {} });
+  } else if (ws && ws.readyState === WebSocket.OPEN) {
+    // WS path: send leave-room and keep the WS open — server frees the slot immediately.
     // Closing the WS races with the data frame (FIN can arrive before the message),
     // triggering on_client_disconnect which starts a hold timer instead.
     // Keeping the WS open eliminates the race; the connection is reused for the next join.
@@ -1002,13 +1062,29 @@ function showSubForm(form: HTMLElement | null): void {
   if (form) { form.hidden = false; }
 }
 
-function sendReconnect(roomCode: string, slot: number): void {
+async function sendReconnect(roomCode: string, slot: number): Promise<void> {
   const code  = roomCode || (currentRoom && currentRoom.room_code) || '';
   const slotN = slot     || (currentRoom && currentRoom.slot) || 0;
   if (!code || !slotN) { return; }
   const token = localStorage.getItem('token_' + code + '_' + slotN);
-  if (token) {
-    // Never log the value (T-03-09)
+  if (!token) { return; }
+  // Never log the value (T-03-09)
+  if (useWt && transport) {
+    // WT path: request/response (reconnect → join-ack or join-error).
+    try {
+      const resp = await sendWtRequest(transport, {
+        type: 'reconnect', from: myId ?? '', to: '', payload: { reconnect_token: token }
+      });
+      if (resp.type === 'join-ack') {
+        handleJoinAck(resp.payload as Record<string, unknown>);
+      } else if (resp.type === 'join-error') {
+        handleJoinError(((resp.payload as Record<string, unknown>)?.reason) as string);
+      }
+    } catch (err) {
+      console.warn('[WT] sendReconnect request failed:', err);
+    }
+  } else {
+    // WS path: fire-and-forget; response arrives asynchronously via onServerMessage.
     sendMessage('reconnect', { reconnect_token: token });
     console.info('[WS] Reconnect token sent.');
   }
