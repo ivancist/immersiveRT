@@ -41,7 +41,7 @@ const basePkt: SensorPacket = {
 describe('decodePacket — roundtrip: seq and timestamp', () => {
   it('recovers seq exactly', () => {
     const pkt = { ...basePkt, seq: 42 };
-    const buf = encodePacket(pkt).buffer.slice(0);
+    const buf = encodePacket(pkt).buffer as ArrayBuffer;
     const decoded = decodePacket(buf);
     expect(decoded).not.toBeNull();
     expect(decoded!.seq).toBe(42);
@@ -49,7 +49,7 @@ describe('decodePacket — roundtrip: seq and timestamp', () => {
 
   it('recovers timestamp exactly', () => {
     const pkt = { ...basePkt, timestamp: 99999 };
-    const buf = encodePacket(pkt).buffer.slice(0);
+    const buf = encodePacket(pkt).buffer as ArrayBuffer;
     const decoded = decodePacket(buf);
     expect(decoded).not.toBeNull();
     expect(decoded!.timestamp).toBe(99999);
@@ -59,7 +59,7 @@ describe('decodePacket — roundtrip: seq and timestamp', () => {
 describe('decodePacket — roundtrip: quaternion (float16 precision)', () => {
   it('recovers qw = 0.707 within ±0.002', () => {
     const pkt = { ...basePkt, qw: 0.707 };
-    const buf = encodePacket(pkt).buffer.slice(0);
+    const buf = encodePacket(pkt).buffer as ArrayBuffer;
     const decoded = decodePacket(buf);
     expect(decoded).not.toBeNull();
     expect(decoded!.qw).toBeCloseTo(0.707, 2);
@@ -67,7 +67,7 @@ describe('decodePacket — roundtrip: quaternion (float16 precision)', () => {
 
   it('recovers qx = 0.5 within float16 tolerance (toBeCloseTo 2)', () => {
     const pkt = { ...basePkt, qx: 0.5 };
-    const buf = encodePacket(pkt).buffer.slice(0);
+    const buf = encodePacket(pkt).buffer as ArrayBuffer;
     const decoded = decodePacket(buf);
     expect(decoded).not.toBeNull();
     expect(decoded!.qx).toBeCloseTo(0.5, 2);
@@ -77,7 +77,7 @@ describe('decodePacket — roundtrip: quaternion (float16 precision)', () => {
 describe('decodePacket — roundtrip: touch flags and coordinates', () => {
   it('recovers touchActive = true', () => {
     const pkt = { ...basePkt, touchActive: true, touchX: 0.5, touchY: 0.25 };
-    const buf = encodePacket(pkt).buffer.slice(0);
+    const buf = encodePacket(pkt).buffer as ArrayBuffer;
     const decoded = decodePacket(buf);
     expect(decoded).not.toBeNull();
     expect(decoded!.touchActive).toBe(true);
@@ -85,7 +85,7 @@ describe('decodePacket — roundtrip: touch flags and coordinates', () => {
 
   it('recovers touchActive = false', () => {
     const pkt = { ...basePkt, touchActive: false };
-    const buf = encodePacket(pkt).buffer.slice(0);
+    const buf = encodePacket(pkt).buffer as ArrayBuffer;
     const decoded = decodePacket(buf);
     expect(decoded).not.toBeNull();
     expect(decoded!.touchActive).toBe(false);
@@ -93,7 +93,7 @@ describe('decodePacket — roundtrip: touch flags and coordinates', () => {
 
   it('recovers touchX = 0.5 within uint16 tolerance (toBeCloseTo 2)', () => {
     const pkt = { ...basePkt, touchActive: true, touchX: 0.5, touchY: 0.0 };
-    const buf = encodePacket(pkt).buffer.slice(0);
+    const buf = encodePacket(pkt).buffer as ArrayBuffer;
     const decoded = decodePacket(buf);
     expect(decoded).not.toBeNull();
     expect(decoded!.touchX).toBeCloseTo(0.5, 2);
@@ -101,7 +101,7 @@ describe('decodePacket — roundtrip: touch flags and coordinates', () => {
 
   it('recovers touchY = 0.75 within uint16 tolerance (toBeCloseTo 2)', () => {
     const pkt = { ...basePkt, touchActive: true, touchX: 0.0, touchY: 0.75 };
-    const buf = encodePacket(pkt).buffer.slice(0);
+    const buf = encodePacket(pkt).buffer as ArrayBuffer;
     const decoded = decodePacket(buf);
     expect(decoded).not.toBeNull();
     expect(decoded!.touchY).toBeCloseTo(0.75, 2);
@@ -118,7 +118,8 @@ describe('decodePacket — guards', () => {
   });
 
   it('returns null when byte 0 is not SCHEMA_VERSION (mutated to 99)', () => {
-    const buf = encodePacket(basePkt).buffer.slice(0);
+    // Must slice to get a copy — avoids mutating the shared module-level _packetBuf
+    const buf = encodePacket(basePkt).buffer.slice(0) as ArrayBuffer;
     new DataView(buf).setUint8(0, 99);
     expect(decodePacket(buf)).toBeNull();
   });

@@ -36,7 +36,10 @@ describe('isNewerSeq', () => {
     expect(isNewerSeq(1, 65534)).toBe(true);
   });
 
-  it('drops large forward jump >32767 treated as old: (200, 33000) → false', () => {
-    expect(isNewerSeq(200, 33000)).toBe(false);
+  it('drops large backward jump >32767 treated as old: (300, 33000) → false', () => {
+    // diff = (300 - 33000) & 0xFFFF = 32836 > 32767 → packet is 32700 behind, drop it
+    // NOTE: (200, 33000) gives diff=32736 ≤ 32767 so RFC 1982 treats 200 as a wrapped-around
+    // future seq (32736 ahead). 300 gives diff=32836 > 32767 and is correctly dropped.
+    expect(isNewerSeq(300, 33000)).toBe(false);
   });
 });
