@@ -921,6 +921,13 @@ function handlePlayerReady(msg: Record<string, unknown>): void {
 // Desktop page
 // ──────────────────────────────────────────────────────────────────────────────
 function initDesktopPage(): void {
+  // Bug 2a fix: view-lobby has hidden=true by default (prevents flash on /room/ reload
+  // with prPhones_ sentinel). Explicitly show it for all non-room paths so the lobby is
+  // visible on a fresh visit to /, after leaveRoom(), or on a popstate back to /.
+  if (!window.location.pathname.match(/^\/room\//i)) {
+    showView('view-lobby');
+  }
+
   // Connect WT-first (D-01); fall back to WS if QUIC is unavailable or blocked (D-02).
   // Do NOT call connectWS here unconditionally — once useWt is true, WS must not open (D-03).
   // Store the promise in wtConnectPromise so createRoom/joinRoom can await it if the user
@@ -1050,6 +1057,8 @@ function initDesktopPage(): void {
       history.replaceState(null, '', '/');
       const codeInputEl = document.getElementById('input-room-code') as HTMLInputElement | null;
       if (codeInputEl) { codeInputEl.value = codeFromPath; }
+      // Un-hide view-lobby (hidden by default — Bug 2a) before showing the sub-form.
+      showView('view-lobby');
       if (joinForm) { showSubForm(joinForm); }
     }
   }
@@ -1545,7 +1554,7 @@ function appendEventLog(event: string, slot: number, username: string): void {
   log.scrollTop = log.scrollHeight;
 }
 
-function leaveRoom(): void {
+async function leaveRoom(): Promise<void> {
   // ── Fix 1: hide all game UI elements immediately ──────────────────────────
   const gameContainer    = document.getElementById('game-container');
   const gameHud          = document.getElementById('game-hud');
@@ -1585,11 +1594,14 @@ function leaveRoom(): void {
   showView('view-lobby');
   showLobbyActions();
 
-  // ── Fix 2: send leave-room then close transport ───────────────────────────
-  // Send leave-room BEFORE closing so the server frees the slot cleanly rather
-  // than waiting for the hold-timer on an abrupt disconnect.
+  // ── Send leave-room then close transport ─────────────────────────────────
+  // Bug 1a fix: sendWtMessage is async — the old try/catch only caught sync throws,
+  // leaving the Promise rejection unhandled ("WebTransportError: The session is closed").
+  // Bug 1b fix: await the send so leave-room actually reaches the server BEFORE
+  // transport.close() fires, giving the server time to notify the phone immediately
+  // rather than waiting for the hold-timer on an abrupt disconnect.
   if (useWt && transport) {
-    try { sendWtMessage(transport, { type: 'leave-room', from: myId ?? '', to: '', payload: {} }); } catch (_e) {}
+    try { await sendWtMessage(transport, { type: 'leave-room', from: myId ?? '', to: '', payload: {} }); } catch (_e) {}
     try { transport.close(); } catch (_e) {}
     transport = null;
     useWt = false;

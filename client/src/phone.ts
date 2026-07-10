@@ -42,6 +42,7 @@ let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let registered = false;       // true once register ack confirmed; guards sendPhoneState
 let reconnectToken: string | null = null;  // from pair-ack / join-ack; used for WT-drop WS reconnect
 let _reconnecting = false;    // true during attemptReconnect loop; suppresses ws.onclose → view-ended
+let sensorPipelineRunning = false; // true once startSensorPipeline has been called; guards re-calibration on desktop reconnect
 
 // ── Sensor pipeline state (Plan 06/07) ───────────────────────────────────────
 let sessionStart = 0;                              // ms epoch at pipeline start
@@ -779,6 +780,7 @@ function broadcastPacket(uint8: Uint8Array<ArrayBuffer>): void {
  * @param kalmanQ        Kalman process-noise Q from calibration.
  */
 function startSensorPipeline(zuptThreshold: number, kalmanQ: number): void {
+  sensorPipelineRunning = true; // Bug 2b: mark pipeline active; guards onPlayerReady re-calibration
   // Store calibration params.
   _calThreshold = zuptThreshold;
   _calKalmanQ   = kalmanQ;
@@ -967,6 +969,15 @@ function onPlayerReady(msg: SignalingMessage): void {
   if (dotEl) {
     dotEl.classList.remove('dot--hold', 'dot--empty');
     dotEl.classList.add('dot--connected');
+  }
+
+  // Bug 2b fix: if sensor pipeline is already running, the desktop merely reconnected —
+  // skip the 3-second hold-still recalibration and go straight to view-active.
+  // Server replays player-ready on every desktop reconnect; the phone must not restart
+  // calibration when it is already in active state.
+  if (sensorPipelineRunning) {
+    showView('view-active');
+    return;
   }
 
   // Phase 5 D-08: show hold-still calibration scene, then auto-advance to active view.
