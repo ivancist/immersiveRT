@@ -888,10 +888,11 @@ impl RoomRegistry {
 
         // Push peer-left to the phone (D-07): notify the phone that this desktop left
         // so it can close the matching RTCPeerConnection.
+        // reason=disconnect: temporary drop (reload/network) — phone skips recalibration on reconnect.
         // Only push if a phone is paired; route_to_phone is a safe no-op otherwise.
         let peer_left_bytes = serde_json::to_vec(&serde_json::json!({
             "type": "peer-left",
-            "payload": { "peer_id": client_id }
+            "payload": { "peer_id": client_id, "reason": "disconnect" }
         }))
         .unwrap_or_default();
         self.route_to_phone(&room_code, peer_left_bytes, broker);
@@ -986,10 +987,11 @@ impl RoomRegistry {
         .unwrap_or_default();
         self.broadcast_to_room(&room_code, client_id, event, broker);
 
-        // Push peer-left to the phone (D-07) on explicit leave as well.
+        // Push peer-left to the phone (D-07) on explicit leave.
+        // reason=leave: intentional — phone resets calibration and shows view-ended.
         let peer_left_bytes = serde_json::to_vec(&serde_json::json!({
             "type": "peer-left",
-            "payload": { "peer_id": client_id }
+            "payload": { "peer_id": client_id, "reason": "leave" }
         }))
         .unwrap_or_default();
         self.route_to_phone(&room_code, peer_left_bytes, broker);

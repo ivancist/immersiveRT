@@ -100,13 +100,24 @@ function tryLockPortrait(): void {
   }
 }
 
+function tryRequestFullscreen(): void {
+  const el = document.documentElement;
+  if (typeof el.requestFullscreen === 'function') {
+    el.requestFullscreen().catch(function() { /* silently ignore: browser policy */ });
+  } else if (typeof (el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen === 'function') {
+    (el as HTMLElement & { webkitRequestFullscreen: () => Promise<void> }).webkitRequestFullscreen()
+      .catch(function() { /* silently ignore */ });
+  }
+}
+
 function attachGrantButton(): void {
   const btn = document.getElementById('btn-grant-motion');
   if (!btn) { return; }
 
   btn.addEventListener('click', function() {
-    // Retry portrait lock inside the user gesture — Chrome Android requires this.
+    // Both calls need the user gesture context: orientation lock (Android) and fullscreen.
     tryLockPortrait();
+    tryRequestFullscreen();
     if (typeof DeviceMotionEvent !== 'undefined' &&
         typeof (DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> }).requestPermission === 'function') {
       // iOS 13+: requestPermission() MUST be the first call — no await before it.
@@ -1086,11 +1097,17 @@ async function handleServerPush(msg: SignalingMessage): Promise<void> {
       openChannelToPeer((msg.payload['peer'] as { id: string })['id']);
       break;
 
-    case 'peer-left':
+    case 'peer-left': {
+      // reason='leave': desktop clicked Leave Room — show ended, reset calibration.
+      // reason='disconnect': desktop reloaded/network drop — skip calibration on reconnect.
+      const leaveReason = (msg.payload && msg.payload['reason'] as string) || 'disconnect';
       closePeer((msg.payload && msg.payload['peer_id'] as string) || '');
-      // Intentional desktop leave — reset so next desktop gets fresh calibration.
-      sensorPipelineRunning = false;
+      if (leaveReason === 'leave') {
+        sensorPipelineRunning = false;
+        showView('view-ended');
+      }
       break;
+    }
 
     case 'session-ended':
       if (heartbeatInterval !== null) { clearInterval(heartbeatInterval); heartbeatInterval = null; }

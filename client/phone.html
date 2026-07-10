@@ -211,21 +211,19 @@
       transition: width 3s linear;
     }
 
-    /* Landscape lock overlay — CSS-only, works on iOS Safari where screen.orientation.lock is unsupported */
-    #landscape-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      z-index: 9999;
-      background: var(--color-bg);
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      padding: 2rem;
-    }
+    /* Landscape rotation — rotate the whole page -90deg so it always reads portrait.
+       Works on iOS Safari where screen.orientation.lock is unsupported. */
     @media (orientation: landscape) {
-      #landscape-overlay { display: flex; }
+      body {
+        transform: rotate(-90deg);
+        transform-origin: left top;
+        width: 100vh;
+        height: 100vw;
+        overflow-x: hidden;
+        position: absolute;
+        top: 100%;
+        left: 0;
+      }
     }
   </style>
 </head>
@@ -297,12 +295,6 @@
     </div>
 
   </div>
-</div>
-
-<!-- Landscape lock overlay — hidden in portrait, shown in landscape via CSS media query -->
-<div id="landscape-overlay" aria-live="polite">
-  <p class="size-heading">Rotate your phone</p>
-  <p class="size-body text-secondary mt-md">This controller works in portrait only.</p>
 </div>
 
 <script type="module" src="./src/phone.ts"></script>
