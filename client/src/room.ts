@@ -794,6 +794,17 @@ function handlePlayerReady(msg: Record<string, unknown>): void {
   console.info('[WebRTC] player-ready received:', payload);
   appendEventLog('player-ready', slot, username);
 
+  // Desktop-only guard (D-16): the server routes player-ready to BOTH the desktop
+  // (broadcast_to_room) AND the phone client (route_to_phone). When the phone is
+  // loaded via room.ts (e.g., Vite dev server /phone → SPA fallback → index.html),
+  // this handler fires on the phone and would call showGameView(), replacing the
+  // pairing UI with the WebGL canvas — causing a white/blank screen on mobile.
+  // Guard: only transition to game view when running as the desktop (not /phone path).
+  if (window.location.pathname.startsWith('/phone')) {
+    console.info('[room] player-ready on phone path — skipping game view transition');
+    return;
+  }
+
   // First player-ready: show game view and init the 3D scene (guarded — D-04, D-05)
   if (!gameViewShown) {
     gameViewShown = true;
