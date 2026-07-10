@@ -6,19 +6,33 @@
  *   CSS2DRenderer domElement appended into `container` (#game-container), NOT document.body
  *   (Pitfall 5: must share the same positioned container as the WebGL canvas).
  *
- * addPlayerToScene / removePlayerFromScene: stubs — bodies filled in plan 04.
- * playerObjects is iterated (empty) by updateScene() each rAF frame — filled in plan 04.
+ * addPlayerToScene(phoneId, slot, username): Create box mesh with per-slot HSL color,
+ *   CSS2DObject name label (textContent only — XSS guard, T-06-10), and AxesHelper child.
+ *   All objects allocated once and stored in playerObjects map (no per-frame alloc — Pitfall 6).
+ *
+ * removePlayerFromScene(phoneId): Dispose and remove the mesh (+ label + axes children)
+ *   from the scene.
+ *
+ * updateScene() [private, called from rAF]: SLERP each player's mesh quaternion toward the
+ *   latest decoded orientation from targetStateStore at SLERP_ALPHA = 0.3 (D-12).
+ *   Uses ONE module-scope scratchQuat — never allocates inside the loop (Pitfall 6).
+ *   Position updated from positionMode: 'gesture' uses (dx,dy,dz); 'deadReckoning' uses (px,py,pz).
+ *
+ * cyclePositionMode(): Toggle positionMode and return the new mode label (used by plan 05 keyboard).
  */
 
 import * as THREE from 'three';
-import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { targetStateStore } from './playerStore';
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Minimal PlayerObject interface
-// Extended in plan 04 with label, flashing, axes, trail fields.
+// PlayerObject interface (plan 03: mesh only; plan 04: adds label, axes, flashing)
 // ──────────────────────────────────────────────────────────────────────────────
 export interface PlayerObject {
   mesh: THREE.Mesh;
+  label: CSS2DObject;
+  axes: THREE.AxesHelper;
+  flashing: boolean;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -33,17 +47,52 @@ let camera: THREE.PerspectiveCamera;
 let sceneInitialized = false;
 let animRunning = false;
 
-// Per-player 3D objects — populated by addPlayerToScene() in plan 04
+// Per-player 3D objects — populated by addPlayerToScene()
 const playerObjects = new Map<string, PlayerObject>();
+
+// Module-scope scratch quaternion — allocated ONCE here, mutated in updateScene() each frame.
+// Never allocate a Quaternion inside animate() or updateScene() (Pitfall 6: no per-frame GC).
+const scratchQuat = new THREE.Quaternion();
+
+// SLERP alpha: 0.3 per frame (D-12 — smooth but responsive)
+const SLERP_ALPHA = 0.3;
+
+// Active position display mode (D-13 default: gestureDisplacement)
+let positionMode: 'gesture' | 'deadReckoning' = 'gesture';
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Private: per-slot HSL color (Pattern 7 / UI-SPEC slot color formula)
+// ──────────────────────────────────────────────────────────────────────────────
+function slotColor(slot: number): THREE.Color {
+  // Slot 1→8 maps to hue range [0, 7/8) with fixed saturation + lightness
+  return new THREE.Color().setHSL((slot - 1) / 8, 0.7, 0.55);
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Private: update scene from player state each rAF tick
-// No-op for now — bodies filled in plan 04 when playerObjects is populated.
 // ──────────────────────────────────────────────────────────────────────────────
 function updateScene(): void {
-  for (const [, obj] of playerObjects) {
-    // plan 04: SLERP quaternion, update position, touch flash, trail
-    void obj;
+  for (const [phoneId, obj] of playerObjects) {
+    const state = targetStateStore.get(phoneId);
+    if (!state) { continue; }
+
+    // SLERP toward latest decoded orientation (D-12, DESK-05).
+    // scratchQuat.set(x, y, z, w) — THREE.Quaternion uses (x, y, z, w) order where w is scalar.
+    // SensorPacket stores (qw, qx, qy, qz) so we pass (qx, qy, qz, qw) here.
+    // NEVER apply orientation via direct assignment — always SLERP (Pitfall/anti-pattern).
+    obj.mesh.quaternion.slerp(
+      scratchQuat.set(state.qx, state.qy, state.qz, state.qw),
+      SLERP_ALPHA
+    );
+
+    // Update position from active mode (D-13)
+    if (positionMode === 'gesture') {
+      // gestureDisplacement: (dx, dy, dz) accumulated since last ZUPT reset
+      obj.mesh.position.set(state.dx, state.dy, state.dz);
+    } else {
+      // deadReckoning: (px, py, pz) Kalman-integrated dead-reckoning position
+      obj.mesh.position.set(state.px, state.py, state.pz);
+    }
   }
 }
 
@@ -121,7 +170,7 @@ export function initScene(canvas: HTMLCanvasElement, container: HTMLElement): vo
   dirLight.position.set(5, 10, 5);
   scene.add(dirLight);
 
-  // Grid floor (G key toggle in plan 04; default on — D-15)
+  // Grid floor (G key toggle in plan 05; default on — D-15)
   const grid = new THREE.GridHelper(10, 10, 0x444444, 0x333333);
   scene.add(grid);
 
@@ -137,18 +186,66 @@ export function initScene(canvas: HTMLCanvasElement, container: HTMLElement): vo
 
 /**
  * Add a player's 3D object to the scene.
- * Stub — full implementation in plan 04 (box mesh, HSL color, CSS2DLabel, axes, trail).
+ *
+ * Creates a BoxGeometry(1,1,1) mesh with a per-slot HSL MeshStandardMaterial,
+ * attaches a CSS2DObject name label (textContent only — T-06-10 XSS guard),
+ * and adds an AxesHelper(0.5) child (visible by default — D-15).
+ *
+ * Idempotent: if phoneId already has a scene object, returns immediately.
+ *
+ * @param phoneId  Unique identifier for this phone's peer connection
+ * @param slot     Display slot (1–8) — determines HSL color (UI-SPEC slot color formula)
+ * @param username Player name shown in the floating CSS2D label
  */
 export function addPlayerToScene(phoneId: string, slot: number, username: string): void {
-  // plan 04: create box mesh with slotColor(slot), CSS2DObject label, AxesHelper, trail line
-  void phoneId; void slot; void username;
+  // Idempotency: do not re-add a player already in the scene
+  if (playerObjects.has(phoneId)) { return; }
+
+  // Box mesh with per-slot HSL color (Pattern 7 / UI-SPEC)
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const material = new THREE.MeshStandardMaterial({ color: slotColor(slot) });
+  const mesh = new THREE.Mesh(geometry, material);
+  scene.add(mesh);
+
+  // Floating name label — CSS2DObject positioned above the box (D-11)
+  // textContent (not direct HTML) prevents script injection via player name (T-06-10)
+  const labelDiv = document.createElement('div');
+  labelDiv.className = 'player-label';
+  labelDiv.textContent = username;
+  const label = new CSS2DObject(labelDiv);
+  label.position.set(0, 1.2, 0); // 1.2 units above box center (UI-SPEC)
+  mesh.add(label); // label is a child of mesh — follows it automatically
+
+  // Axes helper to visualise orientation axes per player (D-15: visible by default)
+  const axes = new THREE.AxesHelper(0.5);
+  mesh.add(axes);
+
+  playerObjects.set(phoneId, { mesh, label, axes, flashing: false });
 }
 
 /**
- * Remove a player's 3D object from the scene.
- * Stub — full implementation in plan 04.
+ * Remove a player's 3D object from the scene and dispose GPU resources.
+ *
+ * The label (CSS2DObject) and axes (AxesHelper) are children of the mesh and
+ * are removed automatically when the mesh is removed from the scene.
+ * Geometry and material are disposed to release GPU memory.
  */
 export function removePlayerFromScene(phoneId: string): void {
-  // plan 04: remove mesh + label + axes + trail from scene, delete from playerObjects
-  void phoneId;
+  const obj = playerObjects.get(phoneId);
+  if (!obj) { return; }
+
+  scene.remove(obj.mesh);
+  obj.mesh.geometry.dispose();
+  (obj.mesh.material as THREE.MeshStandardMaterial).dispose();
+  playerObjects.delete(phoneId);
+}
+
+/**
+ * Toggle the position display mode between gesture displacement and dead-reckoning.
+ * Returns the newly active mode label (consumed by plan 05 keyboard handler for HUD update).
+ * Does NOT add keyboard listeners here — plan 05 owns key binding.
+ */
+export function cyclePositionMode(): string {
+  positionMode = positionMode === 'gesture' ? 'deadReckoning' : 'gesture';
+  return positionMode;
 }
