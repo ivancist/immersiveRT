@@ -451,30 +451,34 @@ function handleOffer(msg: Record<string, unknown>): void {
     dc.binaryType = 'arraybuffer';
 
     dc.onopen = function () {
-      console.info('[WebRTC] data channel open phone=' + tag);
+      console.info('[WebRTC] data channel open phone=' + tag + ' binaryType=' + dc.binaryType);
       sendMessage('rtc-channel-ready', { with: phoneId });
     };
 
     // Decode→finite-guard→seq-drop→store pipeline (DESK-02, T-06-09, T-06-05b, T-06-11).
     // No sensor packet is relayed back through the server from this handler (DESK-02: P2P only).
     dc.onmessage = function (msgEvt: MessageEvent<ArrayBuffer>) {
+      // Diagnostic: confirm packets are arriving and arriving as ArrayBuffer.
+      // Remove once verified (or keep at console.debug to silence in production).
+      console.log('[decode] packet received from phone=' + tag + ' byteLength=' + (msgEvt.data as ArrayBuffer).byteLength + ' type=' + Object.prototype.toString.call(msgEvt.data));
+
       // T-06-03/T-06-04: decode packet — null on truncated or version-mismatch buffer
       const pkt = decode.decodePacket(msgEvt.data);
       if (!pkt) {
-        console.debug('[decode] dropped malformed packet from phone=' + tag);
+        console.log('[decode] dropped malformed packet from phone=' + tag);
         return;
       }
 
       // T-06-09: reject non-finite quaternion fields before they reach THREE.Quaternion
       if (!decode.isSafePacket(pkt)) {
-        console.debug('[decode] dropped non-finite quaternion from phone=' + tag);
+        console.log('[decode] dropped non-finite quaternion from phone=' + tag);
         return;
       }
 
       // T-06-05b: RFC 1982 seq-drop — reject out-of-order / duplicate / replayed packets
       const state = playerStore.targetStateStore.get(phoneId);
       if (state && !decode.isNewerSeq(pkt.seq, state.lastSeq)) {
-        console.debug('[decode] dropped out-of-order seq ' + pkt.seq + ' (last=' + state.lastSeq + ') from phone=' + tag);
+        console.log('[decode] dropped out-of-order seq ' + pkt.seq + ' (last=' + state.lastSeq + ') from phone=' + tag);
         return;
       }
 
