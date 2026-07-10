@@ -1179,4 +1179,12 @@ document.addEventListener('DOMContentLoaded', function() {
       .lock('portrait')
       .catch(function() { /* silently ignore: iOS / unsupported browsers */ });
   }
+
+  // Fix 4: block pinch-zoom (multi-touch touchmove) and double-tap zoom.
+  // viewport meta already sets maximum-scale=1/user-scalable=no but not all
+  // browsers honour that (Firefox Android ignores user-scalable=no).
+  document.addEventListener('touchmove', function(e: TouchEvent) {
+    if (e.touches.length > 1) { e.preventDefault(); }
+  }, { passive: false });
+  document.addEventListener('dblclick', function(e: Event) { e.preventDefault(); });
 });

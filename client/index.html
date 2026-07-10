@@ -487,6 +487,65 @@
       text-shadow: 0 1px 2px #000;
       pointer-events: none;
     }
+    /* ── Esc leave-confirmation overlay (Fix 2) ── */
+    #game-esc-overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.72);
+      z-index: 30;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--color-text-primary);
+    }
+    #esc-dialog {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      padding: 32px 40px;
+      text-align: center;
+      min-width: 300px;
+    }
+    #esc-dialog-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 4px;
+    }
+    #esc-dialog-hint {
+      font-size: 12px;
+      color: var(--color-text-secondary);
+      margin: 14px 0 0;
+    }
+    #esc-buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-top: 20px;
+    }
+    #btn-esc-leave {
+      background: #c0392b;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 10px 22px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #btn-esc-leave:hover { background: #e74c3c; }
+    #btn-esc-stay {
+      background: transparent;
+      color: var(--color-text-primary);
+      border: 1px solid var(--color-border);
+      border-radius: 4px;
+      padding: 10px 22px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #btn-esc-stay:hover { background: rgba(255,255,255,0.07); }
   </style>
 </head>
 <body>
@@ -644,7 +703,7 @@
   <div id="game-hud">
     <div id="hud-slots">0/0 connected</div>
     <div id="hud-mode">pos: gesture&nbsp;&nbsp;[P to cycle]</div>
-    <div id="hud-keys">G:on&nbsp;&nbsp;A:on&nbsp;&nbsp;H:on&nbsp;&nbsp;T:off&nbsp;&nbsp;R:reset&nbsp;&nbsp;Esc:leave</div>
+    <div id="hud-keys">G:on&nbsp;&nbsp;A:on&nbsp;&nbsp;H:on&nbsp;&nbsp;T:off&nbsp;&nbsp;R:reset&nbsp;&nbsp;Esc:menu</div>
   </div>
 
   <!-- Per-player numeric HUD panel (D-15, H key toggle) -->
@@ -654,6 +713,18 @@
   <div id="game-tab-overlay">
     <div id="tab-roster">
       <p class="size-heading">Players</p>
+    </div>
+  </div>
+
+  <!-- Esc leave-confirmation overlay (Fix 2) — pointer-events on by default -->
+  <div id="game-esc-overlay">
+    <div id="esc-dialog">
+      <p id="esc-dialog-title">Leave Room?</p>
+      <div id="esc-buttons">
+        <button id="btn-esc-leave">Leave Room</button>
+        <button id="btn-esc-stay">Stay</button>
+      </div>
+      <p id="esc-dialog-hint">Press Esc again to leave &bull; any key or Stay to cancel</p>
     </div>
   </div>
 

@@ -179,10 +179,10 @@ function updateScene(): void {
     //   Device Z (out of screen,        → Three.js +Y  (up when phone is flat face-up)
     //             up when phone flat)
     //
-    // Verified against user report (Fix C): "move phone forward → cube goes UP,
-    // pick phone up → cube goes FORWARD." Previous mapping was set(-dx, dy, dz)
-    // which incorrectly put device-Y (forward) into Three.js Y (up) and device-Z
-    // (up) into Three.js Z (toward viewer). Correct: set(-dx, dz, -dy).
+    // Verified against user reports (Fix C, Fix 1): initial set(-dx, dz, -dy) had
+    // Y/Z sign errors — "lift phone → cube went DOWN, push forward → cube went AWAY."
+    // Correct: set(-dx, -dz, dy) — negate Three.js Y so lift → up, negate Three.js Z
+    // so push forward → forward into scene.
     //
     // Fix D: dx/dy/dz are ABSOLUTE accumulated displacement (not per-packet deltas).
     // The store is NOT zeroed on R-key reset — it is overwritten immediately by the
@@ -193,12 +193,12 @@ function updateScene(): void {
       const rdx = state.dx - off.dx;
       const rdy = state.dy - off.dy;
       const rdz = state.dz - off.dz;
-      obj.mesh.position.set(-rdx, rdz, -rdy);
+      obj.mesh.position.set(-rdx, -rdz, rdy);
     } else {
       const rpx = state.px - off.px;
       const rpy = state.py - off.py;
       const rpz = state.pz - off.pz;
-      obj.mesh.position.set(-rpx, rpz, -rpy);
+      obj.mesh.position.set(-rpx, -rpz, rpy);
     }
 
     // (c) Touch flash — D-14: live per-frame emissive tracking.

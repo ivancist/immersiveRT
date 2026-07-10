@@ -98,6 +98,11 @@ let keyListenersAttached = false;
 // TAB-held state flag (plan 05 keyboard handler — D-07)
 let tabHeld = false;
 
+// Esc-menu shown flag — true while the leave-confirmation overlay is visible.
+// First Esc shows the overlay; second Esc (or "Leave" button) calls leaveRoom().
+// Any other key (or "Stay" button) dismisses it without leaving.
+let escMenuShown = false;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
@@ -130,6 +135,16 @@ function showGameView(): void {
 
   // Attach keyboard listeners (idempotent — safe to call on every showGameView)
   attachGameKeyListeners();
+
+  // Wire Esc-overlay buttons (idempotent via onclick reassignment)
+  const btnLeave = document.getElementById('btn-esc-leave');
+  const btnStay  = document.getElementById('btn-esc-stay');
+  if (btnLeave) {
+    btnLeave.onclick = function () { dismissEscMenu(); leaveRoom(); };
+  }
+  if (btnStay) {
+    btnStay.onclick = function () { dismissEscMenu(); };
+  }
 
   // Sync HUD with initial state (0/0 connected, gesture mode, all toggles at defaults)
   updateHud();
@@ -220,7 +235,7 @@ function updateHud(): void {
       'A:' + (states.axesVisible       ? 'on' : 'off') + '  ' +
       'H:' + (states.numericHudVisible ? 'on' : 'off') + '  ' +
       'T:' + (states.trailVisible      ? 'on' : 'off') + '  ' +
-      'R:reset  Esc:leave';
+      'R:reset  Esc:menu';
   }
 }
 
@@ -311,6 +326,21 @@ function renderTabRoster(): void {
 // keyup: Tab hides roster overlay.
 // Attached once via attachGameKeyListeners() idempotency guard.
 // ──────────────────────────────────────────────────────────────────────────────
+// Show the Esc leave-confirmation overlay (Fix 2).
+// First Esc press shows this; second Esc or "Leave Room" button calls leaveRoom().
+// "Stay" button or any non-Esc key dismisses it.
+function showEscMenu(): void {
+  const overlay = document.getElementById('game-esc-overlay');
+  if (overlay) { overlay.style.display = 'flex'; }
+  escMenuShown = true;
+}
+
+function dismissEscMenu(): void {
+  const overlay = document.getElementById('game-esc-overlay');
+  if (overlay) { overlay.style.display = 'none'; }
+  escMenuShown = false;
+}
+
 function attachGameKeyListeners(): void {
   // Idempotency guard — prevents duplicate handler attachment on re-entry
   if (keyListenersAttached) { return; }
@@ -319,6 +349,17 @@ function attachGameKeyListeners(): void {
   function onGameKeydown(evt: KeyboardEvent): void {
     // Only dispatch when game view is active
     if (!gameViewShown) { return; }
+
+    // If the Esc menu is open, Esc confirms leave, any other key dismisses it.
+    if (escMenuShown) {
+      if (evt.key.toLowerCase() === 'escape') {
+        dismissEscMenu();
+        leaveRoom();
+      } else {
+        dismissEscMenu();
+      }
+      return;
+    }
 
     switch (evt.key.toLowerCase()) {
       case 'p':
@@ -351,13 +392,9 @@ function attachGameKeyListeners(): void {
         resetAllPlayerPositions();
         break;
       case 'escape':
-        // Fix F: Esc key leaves game view and returns to lobby.
-        // Clears prPhones_ sessionStorage sentinel so the next join shows QR (not game view).
-        if (currentRoom) {
-          sessionStorage.removeItem('prPhones_' + currentRoom.room_code);
-        }
-        playerReadyPhones.clear();
-        leaveRoom();
+        // Fix 2: First Esc shows a confirmation overlay (prevents accidental leave).
+        // Second Esc (or "Leave Room" button) calls leaveRoom().
+        showEscMenu();
         break;
       case 'tab':
         // Show TAB roster overlay while held; preventDefault stops browser focus-cycling (T-06-13)
@@ -693,23 +730,13 @@ function handleOffer(msg: Record<string, unknown>): void {
     dc.onopen = function () {
       console.info('[WebRTC] data channel open phone=' + tag + ' binaryType=' + dc.binaryType);
       sendMessage('rtc-channel-ready', { with: phoneId });
-      if (gameViewShown) {
-        // Update HUD connected count (desktopChannels.size already includes this channel).
-        updateHud();
-
-        // Fix E: On desktop reload, server's player_ready_sent dedup guard may prevent
-        // a new player-ready from firing. Server now sends peer-joined on desktop reconnect
-        // (server fix in room_registry.rs) and clears the dedup guard, so player-ready
-        // will arrive again. But as a client-side safety net: if game view is already shown
-        // and this phoneId is not yet in the scene, add a placeholder box immediately.
-        // When player-ready arrives (moments later), addPlayerToScene is idempotent — it
-        // skips re-adding an already-registered phoneId (line: if playerObjects.has).
-        if (!phoneSlots.has(phoneId)) {
-          const assignedSlot = nextSceneSlot <= 8 ? nextSceneSlot++ : 8;
-          phoneSlots.set(phoneId, assignedSlot);
-          addPlayerToScene(phoneId, assignedSlot, 'Slot ' + assignedSlot);
-        }
-      }
+      // Update HUD connected count; scene add is deferred to player-ready which carries
+      // the correct slot number and username. Server Fix E (room_registry.rs) clears the
+      // player_ready_sent dedup guard and sends peer-joined on desktop reconnect, so
+      // player-ready is guaranteed to arrive even after a page reload. Do NOT add a
+      // placeholder here — wrong-slot assignment causes a miscoloured cube that never
+      // gets corrected (addPlayerToScene is idempotent and won't update an existing entry).
+      if (gameViewShown) { updateHud(); }
     };
 
     dc.onclose = function () {
