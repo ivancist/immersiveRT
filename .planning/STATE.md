@@ -5,10 +5,10 @@ milestone_name: milestone
 current_phase: 06
 current_phase_name: desktop-receive-decode-and-rendering
 status: executing
-stopped_at: Phase 06 Plan 02 complete
+stopped_at: Phase 06 complete — phone-disconnect bug fixed
 last_updated: "2026-07-10T17:55:16.325Z"
 last_activity: 2026-07-10
-last_activity_desc: Phase 06 execution started
+last_activity_desc: Phase 06 complete — phone-disconnect bug fixed (quick task)
 progress:
   total_phases: 8
   completed_phases: 6
@@ -158,6 +158,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260707-f1x | Fix cert permissions for cold start | 2026-07-07 | 880ea1b | [260707-f1x-fix-cert-permissions-for-cold-start](./quick/260707-f1x-fix-cert-permissions-for-cold-start/) |
+| 260710-fix-phone-disconnect-on-leave | Phone transitions to view-connecting when desktop leaves room | 2026-07-10 | 268bf50 | [260710-fix-phone-disconnect-on-leave](./quick/260710-fix-phone-disconnect-on-leave/) |
 
 ## Deferred Items
 
