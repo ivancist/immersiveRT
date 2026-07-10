@@ -771,19 +771,18 @@ function attachTouchListeners(): void {
 
 // ── World-frame acceleration transform ───────────────────────────────────────
 // Rotate device-frame acceleration to W3C earth frame (X=East, Y=North, Z=Up).
-// primaryQuat is device→world (from eulerToQuat, W3C Z-X-Y) — the same
-// convention scene.ts applies unconjugated to orient the mesh in world space.
-// A vector is rotated device→world by applying the quaternion directly
-// (standard active rotation v' = v + w·t + q_vec×t, where t = 2·(q_vec×v)).
-export function rotateDeviceToWorld(vx: number, vy: number, vz: number, q: Quaternion): { x: number; y: number; z: number } {
+// primaryQuat represents world→device (W3C ZXY euler convention); applying its
+// conjugate rotates device→world, eliminating rotation-induced gravity leakage
+// that causes the cube to drift when only rotating the phone.
+function rotateDeviceToWorld(vx: number, vy: number, vz: number, q: Quaternion): { x: number; y: number; z: number } {
   const { w, x: qx, y: qy, z: qz } = q;
-  const tx = 2 * (qy * vz - qz * vy);
-  const ty = 2 * (qz * vx - qx * vz);
-  const tz = 2 * (qx * vy - qy * vx);
+  const tx = 2 * (qz * vy - qy * vz);
+  const ty = 2 * (qx * vz - qz * vx);
+  const tz = 2 * (qy * vx - qx * vy);
   return {
-    x: vx + w * tx + (qy * tz - qz * ty),
-    y: vy + w * ty + (qz * tx - qx * tz),
-    z: vz + w * tz + (qx * ty - qy * tx),
+    x: vx + w * tx + qz * ty - qy * tz,
+    y: vy + w * ty + qx * tz - qz * tx,
+    z: vz + w * tz + qy * tx - qx * ty,
   };
 }
 
