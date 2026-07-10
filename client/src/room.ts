@@ -8,7 +8,18 @@
 export {};
 
 // Three.js scene lifecycle — plan 03 (initScene, stubs) + plan 04 (addPlayer, removePlayer)
-import { initScene, addPlayerToScene, removePlayerFromScene } from './scene';
+// plan 05 (toggle setters, getToggleStates)
+import {
+  initScene,
+  addPlayerToScene,
+  removePlayerFromScene,
+  cyclePositionMode,
+  toggleGrid,
+  toggleAxes,
+  toggleTrail,
+  toggleNumericHud,
+  getToggleStates,
+} from './scene';
 
 // Sensor packet decode pipeline (plan 04: decode→guard→seq-drop→store in ondatachannel)
 import * as decode from './sensor/decode';
@@ -44,11 +55,19 @@ let pendingUsername: string | null = null; // username sent with join-room, used
 const desktopPeers = new Map<string, RTCPeerConnection>(); // phoneId → RTCPeerConnection
 const pendingICE = new Map<string, RTCIceCandidateInit[]>(); // phoneId → ICE candidates queued before setRemoteDescription resolves
 
+// Data channels — stored separately so updateHud/renderTabRoster can read live dc.readyState
+// without traversing peer connections (plan 05, T-06-13: TAB roster reads live channel state)
+const desktopChannels = new Map<string, RTCDataChannel>(); // phoneId → RTCDataChannel
+
 // Scene slot tracking — maps phoneId to display slot (1-based, capped at 8).
 // Used to register first-data-channel phones (before player-ready fires) and to
 // find the phoneId for a departing slot in player-left cleanup (DESK-02).
 const phoneSlots = new Map<string, number>(); // phoneId → slot
 let nextSceneSlot = 1; // auto-increment counter for phones that arrive before player-ready
+
+// Per-slot username cache — keyed by slot (1-8), populated in handlePlayerReady.
+// Used by renderTabRoster to show player names in the TAB overlay without querying the DOM.
+const slotUsernames = new Map<number, string>(); // slot → username
 
 // Diagnostic: set true to force TURN-relay-only ICE (bypasses direct LAN path).
 // Useful to isolate whether DTLS failure is specific to the direct host-to-host path.
@@ -66,6 +85,12 @@ let wtConnectPromise: Promise<boolean> | null = null;
 
 // Guard: first player-ready triggers game view; subsequent ones only add players.
 let gameViewShown = false;
+
+// Keyboard listener guard — prevents double-attachment on re-entry (idempotent)
+let keyListenersAttached = false;
+
+// TAB-held state flag (plan 05 keyboard handler — D-07)
+let tabHeld = false;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -96,6 +121,12 @@ function showGameView(): void {
   const gameHud = document.getElementById('game-hud');
   if (gameContainer) { gameContainer.style.display = 'block'; }
   if (gameHud) { gameHud.style.display = 'block'; }
+
+  // Attach keyboard listeners (idempotent — safe to call on every showGameView)
+  attachGameKeyListeners();
+
+  // Sync HUD with initial state (0/0 connected, gesture mode, all toggles at defaults)
+  updateHud();
 }
 
 function showError(elementId: string, message: string): void {
@@ -144,6 +175,191 @@ function formatTimestamp(date?: Date): string {
   const m = String(d.getMinutes()).padStart(2, '0');
   const s = String(d.getSeconds()).padStart(2, '0');
   return '[' + h + ':' + m + ':' + s + ']';
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Persistent HUD updater (plan 05 — D-06, D-13, D-15)
+//
+// Reads live state from desktopChannels (connected count), scene.getToggleStates()
+// (position mode + toggle booleans), and phoneSlots.size (total registered phones).
+// All writes use textContent (no DOM injection risk from player-controlled data — T-06-10b).
+// ──────────────────────────────────────────────────────────────────────────────
+function updateHud(): void {
+  const states = getToggleStates();
+
+  // Connected count = phones with an open RTCDataChannel;
+  // max = total registered phones (phoneSlots.size)
+  let connectedCount = 0;
+  for (const dc of desktopChannels.values()) {
+    if (dc.readyState === 'open') { connectedCount++; }
+  }
+  const maxCount = phoneSlots.size;
+
+  const hudSlots = document.getElementById('hud-slots');
+  const hudMode  = document.getElementById('hud-mode');
+  const hudKeys  = document.getElementById('hud-keys');
+
+  // textContent writes only — no injection risk (T-06-10b)
+  if (hudSlots) {
+    hudSlots.textContent = connectedCount + '/' + maxCount + ' connected';
+  }
+  if (hudMode) {
+    hudMode.textContent = 'pos: ' + states.positionModeLabel + '  [P to cycle]';
+  }
+  if (hudKeys) {
+    hudKeys.textContent =
+      'G:' + (states.gridVisible     ? 'on' : 'off') + '  ' +
+      'A:' + (states.axesVisible     ? 'on' : 'off') + '  ' +
+      'H:' + (states.numericHudVisible ? 'on' : 'off') + '  ' +
+      'T:' + (states.trailVisible    ? 'on' : 'off');
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// TAB roster builder (plan 05 — D-07)
+//
+// Rebuilds #tab-roster with one row per slot (1–8).
+// Status dot color reflects live RTCDataChannel.readyState.
+// Own slot receives a 3px left accent border (UI-SPEC: --color-accent, D-07).
+// All player-name writes use textContent (XSS guard — T-06-10b).
+// ──────────────────────────────────────────────────────────────────────────────
+function renderTabRoster(): void {
+  const rosterEl = document.getElementById('tab-roster');
+  if (!rosterEl) { return; }
+
+  // Clear existing content — textContent = '' removes all descendants (XSS-safe, T-06-10b)
+  rosterEl.textContent = '';
+
+  // Re-add heading
+  const heading = document.createElement('p');
+  heading.className = 'size-heading';
+  heading.textContent = 'Players';
+  rosterEl.appendChild(heading);
+
+  const ownSlot = currentRoom ? currentRoom.slot : -1;
+
+  for (let i = 1; i <= 8; i++) {
+    // Reverse-lookup: find phoneId for this slot (if any)
+    let phoneId: string | undefined;
+    for (const [pid, s] of phoneSlots) {
+      if (s === i) { phoneId = pid; break; }
+    }
+
+    const username = phoneId ? slotUsernames.get(i) : undefined;
+    const dc = phoneId ? desktopChannels.get(phoneId) : undefined;
+    const readyState = dc ? dc.readyState : '';
+
+    // Status dot color from RTCDataChannel.readyState (UI-SPEC color contract)
+    let dotColor: string;
+    if (dc && dc.readyState === 'open') {
+      dotColor = 'var(--color-status-connected)'; // #22c55e
+    } else if (dc && dc.readyState === 'connecting') {
+      dotColor = 'var(--color-status-hold)'; // #eab308 (animated pulse in full CSS; omitted here)
+    } else {
+      dotColor = 'var(--color-status-empty)'; // #444444
+    }
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;';
+    // Own slot: 3px accent left border (UI-SPEC D-07)
+    if (i === ownSlot) {
+      row.style.borderLeft = '3px solid var(--color-accent)';
+      row.style.paddingLeft = '8px';
+    }
+
+    // Status dot (8px circle)
+    const dot = document.createElement('span');
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;flex-shrink:0;';
+    dot.style.backgroundColor = dotColor;
+    row.appendChild(dot);
+
+    // Slot label (min-width 72px, --color-text-secondary, semibold)
+    const slotLabelEl = document.createElement('span');
+    slotLabelEl.style.cssText = 'min-width:72px;font-size:13px;font-weight:600;color:var(--color-text-secondary);';
+    slotLabelEl.textContent = 'Slot ' + i;
+    row.appendChild(slotLabelEl);
+
+    // Player name (textContent — XSS guard, T-06-10b)
+    const nameEl = document.createElement('span');
+    nameEl.style.cssText = 'flex:1;';
+    nameEl.textContent = (phoneId && username) ? username : '(empty)';
+    row.appendChild(nameEl);
+
+    // Channel state string (verbatim RTCDataChannel.readyState — UI-SPEC D-07)
+    const stateEl = document.createElement('span');
+    stateEl.textContent = phoneId && readyState ? readyState : '—'; // em dash for empty
+    row.appendChild(stateEl);
+
+    rosterEl.appendChild(row);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Game keyboard handler (plan 05 — UI-SPEC Keyboard Interaction Contract)
+//
+// Active only when game view is visible (gameViewShown guard).
+// keydown: P/G/A/H/T/D toggle scene state; Tab shows roster overlay.
+// keyup: Tab hides roster overlay.
+// Attached once via attachGameKeyListeners() idempotency guard.
+// ──────────────────────────────────────────────────────────────────────────────
+function attachGameKeyListeners(): void {
+  // Idempotency guard — prevents duplicate handler attachment on re-entry
+  if (keyListenersAttached) { return; }
+  keyListenersAttached = true;
+
+  function onGameKeydown(evt: KeyboardEvent): void {
+    // Only dispatch when game view is active
+    if (!gameViewShown) { return; }
+
+    switch (evt.key.toLowerCase()) {
+      case 'p':
+        // Cycle position mode (gestureDisplacement ↔ deadReckoningPosition — D-13)
+        cyclePositionMode();
+        updateHud();
+        break;
+      case 'g':
+        // Toggle grid floor visibility (D-15)
+        toggleGrid();
+        updateHud();
+        break;
+      case 'a':
+        // Toggle per-object axes gizmo visibility (D-15)
+        toggleAxes();
+        updateHud();
+        break;
+      case 'h':
+        // Toggle per-player numeric HUD panel (D-15)
+        toggleNumericHud();
+        updateHud();
+        break;
+      case 't':
+      case 'd':
+        // Toggle motion trail / drama mode — both T and D map to single trail toggle (D-14, D-15)
+        toggleTrail();
+        updateHud();
+        break;
+      case 'tab':
+        // Show TAB roster overlay while held; preventDefault stops browser focus-cycling (T-06-13)
+        evt.preventDefault();
+        tabHeld = true;
+        const overlay = document.getElementById('game-tab-overlay');
+        if (overlay) { overlay.style.display = 'block'; }
+        renderTabRoster();
+        break;
+    }
+  }
+
+  function onGameKeyup(evt: KeyboardEvent): void {
+    if (!gameViewShown) { return; }
+    if (evt.key === 'Tab') {
+      tabHeld = false;
+      const overlay = document.getElementById('game-tab-overlay');
+      if (overlay) { overlay.style.display = 'none'; }
+    }
+  }
+
+  window.addEventListener('keydown', onGameKeydown);
+  window.addEventListener('keyup', onGameKeyup);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -450,9 +666,19 @@ function handleOffer(msg: Record<string, unknown>): void {
     // setting after open has no effect on already-buffered messages).
     dc.binaryType = 'arraybuffer';
 
+    // Store data channel so updateHud / renderTabRoster can read live dc.readyState (plan 05)
+    desktopChannels.set(phoneId, dc);
+
     dc.onopen = function () {
       console.info('[WebRTC] data channel open phone=' + tag + ' binaryType=' + dc.binaryType);
       sendMessage('rtc-channel-ready', { with: phoneId });
+      // Update HUD so connected count reflects the newly-open channel
+      if (gameViewShown) { updateHud(); }
+    };
+
+    dc.onclose = function () {
+      // Update HUD so connected count reflects the closed channel
+      if (gameViewShown) { updateHud(); }
     };
 
     // Decode→finite-guard→seq-drop→store pipeline (DESK-02, T-06-09, T-06-05b, T-06-11).
@@ -585,10 +811,18 @@ function handlePlayerReady(msg: Record<string, unknown>): void {
     phoneSlots.set(phoneId, slot);
   }
 
+  // Cache username by slot for TAB roster (plan 05 — renderTabRoster reads slotUsernames)
+  if (slot && username) {
+    slotUsernames.set(slot, username);
+  }
+
   // Add the player's 3D object to the scene (plan 04: box mesh, HSL color, CSS2DLabel, axes)
   if (phoneId) {
     addPlayerToScene(phoneId, slot, username);
   }
+
+  // Refresh HUD so connected count and slot count stay current
+  if (gameViewShown) { updateHud(); }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -998,7 +1232,8 @@ function initSlotRoster(mySlot: number): void {
   const roster = document.getElementById('slot-roster');
   if (!roster) { return; }
 
-  roster.innerHTML = ''; // clear any existing rows
+  // Clear via firstChild loop (XSS-hygiene — all DOM writes use textContent, T-06-10b)
+  while (roster.firstChild) { roster.removeChild(roster.firstChild); }
 
   for (let i = 1; i <= 8; i++) {
     const li = document.createElement('li');
@@ -1089,12 +1324,17 @@ function handleRoomEvent(payload: Record<string, unknown>): void {
         removePlayerFromScene(departedPhoneId);
         playerStore.removePlayerState(departedPhoneId);
         phoneSlots.delete(departedPhoneId);
+        // Remove data channel and username from plan 05 caches
+        desktopChannels.delete(departedPhoneId);
+        slotUsernames.delete(slot);
         const departedPc = desktopPeers.get(departedPhoneId);
         if (departedPc) {
           try { departedPc.close(); } catch (e) { /* ignore */ }
           desktopPeers.delete(departedPhoneId);
         }
       }
+      // Refresh HUD after player leaves
+      if (gameViewShown) { updateHud(); }
       break;
     }
     case 'room-full':
