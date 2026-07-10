@@ -162,6 +162,7 @@ None yet.
 | 260710-w83 | Fix inverted position axes: negate all three components in both position paths | 2026-07-10 | b38e0e5 | [260710-w83-fix-inverted-position-axes-negate-all-th](./quick/260710-w83-fix-inverted-position-axes-negate-all-th/) |
 | 260710-wb4 | Prevent screen rotation: CSS landscape overlay + orientation lock in user gesture | 2026-07-10 | 00eb30d | [260710-wb4-add-landscape-lock-overlay-to-phone-html](./quick/260710-wb4-add-landscape-lock-overlay-to-phone-html/) |
 | 260710-whi | Four phone UX fixes: landscape CSS rotation, fullscreen, peer-left reason, view-ended on leave | 2026-07-10 | 8022055 | [260710-whi-four-phone-ux-fixes-css-90deg-landscape-](./quick/260710-whi-four-phone-ux-fixes-css-90deg-landscape-/) |
+| 260710-wt-race-and-fullscreen-hint | WT close race fix + fullscreen button → rotation hint | 2026-07-10 | 3e26c64 | [260710-wt-race-and-fullscreen-hint](./quick/260710-wt-race-and-fullscreen-hint/) |
 
 ## Deferred Items
 
