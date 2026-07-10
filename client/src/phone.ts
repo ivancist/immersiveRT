@@ -115,17 +115,15 @@ function attachGrantButton(): void {
   if (!btn) { return; }
 
   btn.addEventListener('click', function() {
-    // Both calls need the user gesture context: orientation lock (Android) and fullscreen.
-    tryLockPortrait();
-    tryRequestFullscreen();
     if (typeof DeviceMotionEvent !== 'undefined' &&
         typeof (DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> }).requestPermission === 'function') {
-      // iOS 13+: requestPermission() MUST be the first call — no await before it.
+      // iOS 13+: requestPermission() MUST be the absolute first call — nothing async before it.
       (DeviceMotionEvent as unknown as { requestPermission: () => Promise<string> }).requestPermission()
         .then(function(result: string) {
           if (result === 'granted') {
-            // Request Wake Lock here, while still in the user-gesture context.
-            // iOS rejects navigator.wakeLock.request() if called outside a gesture.
+            // After IMU grant: orientation lock + fullscreen (iOS Safari ignores both, harmless).
+            tryLockPortrait();
+            tryRequestFullscreen();
             requestWakeLock();
             showView('view-connecting');
             startPhoneClient();
@@ -137,7 +135,10 @@ function attachGrantButton(): void {
           showView('view-error-denied');
         });
     } else {
-      // Android / non-iOS: no permission gate needed.
+      // Android / non-iOS: IMU access implicit — button tap IS the grant.
+      // Orientation lock + fullscreen need the synchronous user gesture context here.
+      tryLockPortrait();
+      tryRequestFullscreen();
       (btn as HTMLButtonElement).disabled = true;
       btn.textContent = 'Activating…';
       setTimeout(function() {
@@ -712,13 +713,12 @@ function openChannelToPeer(peerId: string, isRecovery = false): void {
 function updateConnectingUI(): void {
   const chanOpenEl = document.getElementById('chan-open');
   if (chanOpenEl) { chanOpenEl.textContent = String(openChannelCount); }
-  // Transition to view-connecting when all channels close so the phone shows
-  // "waiting for desktop" instead of freezing on view-active.
-  // sensorPipelineRunning is NOT reset here — temporary desktop disconnects
-  // (reload, network drop) should skip recalibration. Only peer-left (intentional
-  // leave) resets it so the next desktop gets fresh calibration.
+  // Show view-ended when all channels close while session is active.
+  // Desktop reload: briefly shows "Session ended" until player-ready fires and restores view-active.
+  // Desktop leave: stays on "Session ended" (no reconnect).
+  // sensorPipelineRunning stays true here so player-ready skips recalibration on reconnect.
   if (openChannelCount === 0 && sensorPipelineRunning) {
-    showView('view-connecting');
+    showView('view-ended');
   }
 }
 

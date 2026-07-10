@@ -211,20 +211,6 @@
       transition: width 3s linear;
     }
 
-    /* Landscape rotation — rotate the whole page -90deg so it always reads portrait.
-       Works on iOS Safari where screen.orientation.lock is unsupported. */
-    @media (orientation: landscape) {
-      body {
-        transform: rotate(-90deg);
-        transform-origin: left top;
-        width: 100vh;
-        height: 100vw;
-        overflow-x: hidden;
-        position: absolute;
-        top: 100%;
-        left: 0;
-      }
-    }
   </style>
 </head>
 <body>
