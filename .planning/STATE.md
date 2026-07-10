@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 06
 current_phase_name: desktop-receive-decode-and-rendering
 status: executing
-stopped_at: Phase 06 UI-SPEC approved
-last_updated: "2026-07-10T08:32:48.459Z"
+stopped_at: Phase 06 Plan 02 complete
+last_updated: "2026-07-10T08:42:19.000Z"
 last_activity: 2026-07-10
-last_activity_desc: Phase 06 execution started
+last_activity_desc: Phase 06 Plan 02 — decode.ts + playerStore.ts — 92 tests green
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 27
-  completed_plans: 23
+  completed_plans: 24
   percent: 63
 ---
 
@@ -77,6 +77,7 @@ Progress: [█████████░] 91%
 | Phase 05 P05 | 3 | 4 tasks | 4 files |
 | Phase 05 P06 | 8 | 2 tasks | 2 files |
 | Phase 05 P07 | 3 | 3 tasks | 3 files |
+| Phase 06 P02 | 7 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -127,6 +128,9 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 5 Plan 07: attachTouchListeners idempotent behind touchListenersAttached + named handlers — no listener leak on session reconnect (T-05-17)
 - [Phase ?]: .planning/phases/06-desktop-receive-decode-and-rendering/06-01-SUMMARY.md
 - [Phase ?]: .planning/phases/06-desktop-receive-decode-and-rendering/06-01-SUMMARY.md
+- Phase 6 Plan 02: decode.ts imports SCHEMA_VERSION + BUF_SIZE from ./encode — single source of truth for byte offsets (never redefines)
+- Phase 6 Plan 02: RFC 1982 half-distance isNewerSeq — diff = (newSeq - lastSeq) & 0xFFFF; accept if diff > 0 && diff <= 32767 (handles 65535→0 wraparound)
+- Phase 6 Plan 02: PlayerState stores plain JS numbers, no THREE types — decouples store from WebGL context for jsdom-testable unit testing
 
 ### Pending Todos
 
@@ -153,6 +157,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-10T08:32:44.654Z
+Last session: 2026-07-10T08:43:32.702Z
 Stopped at: Phase 06 UI-SPEC approved
 Resume file: .planning/phases/06-desktop-receive-decode-and-rendering/06-UI-SPEC.md
