@@ -202,14 +202,14 @@ function updateScene(): void {
       let rdz = state.dz - off.dz;
       const mag = Math.sqrt(rdx * rdx + rdy * rdy + rdz * rdz);
       if (mag < POSITION_DEADZONE) { rdx = 0; rdy = 0; rdz = 0; }
-      // World-frame position (W3C: X=East, Y=North, Z=Up) → Three.js (X=East, Y=Up, Z=South).
-      // Matches scratchQuat.set(qx, qz, -qy, qw) orientation convention.
-      obj.mesh.position.set(rdx, rdz, -rdy);
+      // World-frame position (W3C: X=East, Y=North, Z=Up) → Three.js (X=West, Y=Down, Z=North).
+      // All three axes negated — user verified East/West/Up/Down/North/South all inverted.
+      obj.mesh.position.set(-rdx, -rdz, rdy);
     } else {
       const rpx = state.px - off.px;
       const rpy = state.py - off.py;
       const rpz = state.pz - off.pz;
-      obj.mesh.position.set(rpx, rpz, -rpy);
+      obj.mesh.position.set(-rpx, -rpz, rpy);
     }
 
     // (c) Touch flash — D-14: live per-frame emissive tracking.
