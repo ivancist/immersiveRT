@@ -82,23 +82,11 @@ describe('WebXrPoseTracker — gestureDisplacement rolling window', () => {
     const refSpace = {} as unknown as XRReferenceSpace;
 
     // t=0: pos (0,0,0)
-    (tracker as unknown as { ingest: (frame: XRFrame, refSpace: XRReferenceSpace, now?: number) => void }).ingest(
-      makeFrame(0, 0, 0),
-      refSpace,
-      0,
-    );
+    tracker.ingest(makeFrame(0, 0, 0), refSpace, 0);
     // t=100: pos (1,0,0)
-    (tracker as unknown as { ingest: (frame: XRFrame, refSpace: XRReferenceSpace, now?: number) => void }).ingest(
-      makeFrame(1, 0, 0),
-      refSpace,
-      100,
-    );
+    tracker.ingest(makeFrame(1, 0, 0), refSpace, 100);
     // t=200: pos (2,1,0) — still within 300ms of t=0
-    (tracker as unknown as { ingest: (frame: XRFrame, refSpace: XRReferenceSpace, now?: number) => void }).ingest(
-      makeFrame(2, 1, 0),
-      refSpace,
-      200,
-    );
+    tracker.ingest(makeFrame(2, 1, 0), refSpace, 200);
 
     const state = tracker.getState();
     // oldest sample still within window (t=0, pos (0,0,0)); current is (2,1,0)
@@ -110,16 +98,13 @@ describe('WebXrPoseTracker — gestureDisplacement rolling window', () => {
   it('evicts samples older than the window when computing the delta', () => {
     const tracker = new WebXrPoseTracker(300);
     const refSpace = {} as unknown as XRReferenceSpace;
-    const ingest = (tracker as unknown as {
-      ingest: (frame: XRFrame, refSpace: XRReferenceSpace, now?: number) => void;
-    }).ingest;
 
-    ingest(makeFrame(0, 0, 0), refSpace, 0);
-    ingest(makeFrame(5, 0, 0), refSpace, 100);
+    tracker.ingest(makeFrame(0, 0, 0), refSpace, 0);
+    tracker.ingest(makeFrame(5, 0, 0), refSpace, 100);
     // t=500: sample at t=0 is now 500ms old — evicted from the window.
     // The oldest surviving sample within 300ms of t=500 is t=100 (age 400ms) —
     // still older than window, so only the current sample remains → delta 0.
-    ingest(makeFrame(10, 0, 0), refSpace, 500);
+    tracker.ingest(makeFrame(10, 0, 0), refSpace, 500);
 
     const state = tracker.getState();
     // Both t=0 and t=100 samples are >300ms old relative to t=500 — evicted.
@@ -138,15 +123,12 @@ describe('WebXrPoseTracker — freeze on tracking loss', () => {
   it('retains last-known-good x/y/z (finite, unchanged) with driftConfidence 0 when pose is lost', () => {
     const tracker = new WebXrPoseTracker(300);
     const refSpace = {} as unknown as XRReferenceSpace;
-    const ingest = (tracker as unknown as {
-      ingest: (frame: XRFrame, refSpace: XRReferenceSpace, now?: number) => void;
-    }).ingest;
 
-    ingest(makeFrame(3, 4, 5), refSpace, 0);
-    ingest(makeFrame(6, 7, 8), refSpace, 60);
+    tracker.ingest(makeFrame(3, 4, 5), refSpace, 0);
+    tracker.ingest(makeFrame(6, 7, 8), refSpace, 60);
 
     // Tracking lost.
-    ingest(makeNullFrame(), refSpace, 120);
+    tracker.ingest(makeNullFrame(), refSpace, 120);
 
     const state = tracker.getState();
     expect(state.x).toBe(6);
@@ -161,13 +143,10 @@ describe('WebXrPoseTracker — freeze on tracking loss', () => {
   it('never returns 0/0/0 or NaN as a freeze artifact when last-known-good was non-zero', () => {
     const tracker = new WebXrPoseTracker(300);
     const refSpace = {} as unknown as XRReferenceSpace;
-    const ingest = (tracker as unknown as {
-      ingest: (frame: XRFrame, refSpace: XRReferenceSpace, now?: number) => void;
-    }).ingest;
 
-    ingest(makeFrame(42, -17, 3.5), refSpace, 0);
-    ingest(makeNullFrame(), refSpace, 50);
-    ingest(makeNullFrame(), refSpace, 100);
+    tracker.ingest(makeFrame(42, -17, 3.5), refSpace, 0);
+    tracker.ingest(makeNullFrame(), refSpace, 50);
+    tracker.ingest(makeNullFrame(), refSpace, 100);
 
     const state = tracker.getState();
     expect(state.x).toBe(42);
