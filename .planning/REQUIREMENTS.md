@@ -141,6 +141,7 @@
 | DESK-03 | Phase 6 | Complete |
 | DESK-04 | Phase 6 | Complete |
 | DESK-05 | Phase 6 | Complete |
+| SENS-V2-03 | Phase 06.1 | Pending |
 | SDK-01 | Phase 7 | Pending |
 | SDK-02 | Phase 7 | Pending |
 | SDK-03 | Phase 7 | Pending |
