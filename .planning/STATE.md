@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 06
-current_phase_name: desktop-receive-decode-and-rendering
-status: executing
-stopped_at: Phase 06 complete — phone-disconnect bug fixed
-last_updated: "2026-07-10T23:45:11.915Z"
+current_phase: 06.1
+current_phase_name: camera-assisted-spatial-tracking
+status: planning
+stopped_at: Phase 06 complete — phone-disconnect bug fixed; Phase 06.1 inserted (camera-assisted spatial tracking), not yet planned
+last_updated: "2026-07-11T08:05:26.756Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 06 execution started
 progress:
-  total_phases: 8
+  total_phases: 9
   completed_phases: 6
   total_plans: 27
   completed_plans: 27
-  percent: 75
+  percent: 67
 ---
 
 # Project State
@@ -24,15 +24,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** Phone motion feels physically immediate on screen — sub-20ms sensor delivery from phone to desktop, lowest possible latency.
-**Current focus:** Phase 06 — desktop-receive-decode-and-rendering
+**Current focus:** Phase 06.1 — camera-assisted-spatial-tracking (inserted)
 
 ## Current Position
 
-Phase: 06 (desktop-receive-decode-and-rendering) — EXECUTING
-Status: Executing Phase 06
-Last activity: 2026-07-10 — Phase 06 execution started
+Phase: 06.1 (camera-assisted-spatial-tracking) — NOT PLANNED
+Status: Inserted urgent phase, awaiting /gsd-plan-phase 06.1
+Last activity: 2026-07-11 — Phase 06.1 inserted after Phase 6 (IMU dead-reckoning drift unfixable; pivoting to camera-assisted tracking)
 
-Progress: [█████████░] 91%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
@@ -166,6 +166,10 @@ None yet.
 | 260710-whi | Four phone UX fixes: landscape CSS rotation, fullscreen, peer-left reason, view-ended on leave | 2026-07-10 | 8022055 | [260710-whi-four-phone-ux-fixes-css-90deg-landscape-](./quick/260710-whi-four-phone-ux-fixes-css-90deg-landscape-/) |
 | 260710-wt-race-and-fullscreen-hint | WT close race fix + fullscreen button → rotation hint | 2026-07-10 | 3e26c64 | [260710-wt-race-and-fullscreen-hint](./quick/260710-wt-race-and-fullscreen-hint/) |
 | 260711-0lh | Fix huge position drift (REVERTED — broke on-device control, see 3703a0c; root cause still open, moved to /gsd-debug) | 2026-07-11 | 3703a0c | [260711-0lh-fix-huge-position-drift-making-phone-mot](./quick/260711-0lh-fix-huge-position-drift-making-phone-mot/) |
+
+### Roadmap Evolution
+
+- Phase 06.1 inserted after Phase 6: Camera-Assisted Spatial Tracking — WebXR/ARCore (Android) + iOS VIO library research, replacing unfixable IMU-only dead-reckoning (URGENT)
 
 ## Deferred Items
 

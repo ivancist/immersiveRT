@@ -204,6 +204,17 @@ Plans:
 
 - [x] 06-05-PLAN.md — Precision-eval instrumentation: keyboard toggles, persistent HUD, TAB roster, numeric HUD, touch flash, motion trail (DESK-05)
 
+### Phase 06.1: Camera-Assisted Spatial Tracking (INSERTED)
+
+**Goal:** Replace/augment IMU-only position dead-reckoning — which cannot be tuned to usable accuracy (see resolved debug session `.planning/debug/huge-position-drift-makes-pho.md`) — with camera-assisted 6DOF position tracking. Android: WebXR `immersive-ar` (ARCore) via three.js r185, opaque-layer trick to skip passthrough rendering, position-only at ~30fps, keep existing `DeviceOrientationEvent` for orientation. iOS: Safari has no native WebXR AR (confirmed dead end) — needs a research spike into a third-party visual-inertial/SLAM library (e.g. 8th Wall's Distributed Engine Binary post-Niantic-shutdown licensing, or alternatives), since MindAR/AR.js are marker-tracking only, not free-space 6DOF. Escape hatch: if browser-based camera tracking drains battery/heat too much on either platform, fall back to a native companion app (iOS native ARKit, Android native ARCore) instead of browser-based tracking.
+**Requirements**: TBD
+**Depends on:** Phase 6
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 06.1 to break down)
+
 ### Phase 7: SDK Public API
 
 **Goal**: The `immersive-rt` npm package exposes a clean imperative + event-driven API with TypeScript types, a developer latency overlay, drift-honest naming, and a raw orientation opt-in — ready for a third-party developer to integrate without reading source code
