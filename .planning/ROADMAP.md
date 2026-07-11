@@ -209,7 +209,7 @@ Plans:
 **Goal:** Replace/augment IMU-only position dead-reckoning — which cannot be tuned to usable accuracy (see resolved debug session `.planning/debug/huge-position-drift-makes-pho.md`) — with camera-assisted 6DOF position tracking. Android: WebXR `immersive-ar` (ARCore) via three.js r185, opaque-layer trick to skip passthrough rendering, position-only at ~30fps, keep existing `DeviceOrientationEvent` for orientation. iOS: Safari has no native WebXR AR (confirmed dead end) — needs a research spike into a third-party visual-inertial/SLAM library (e.g. 8th Wall's Distributed Engine Binary post-Niantic-shutdown licensing, or alternatives), since MindAR/AR.js are marker-tracking only, not free-space 6DOF. Escape hatch: if browser-based camera tracking drains battery/heat too much on either platform, fall back to a native companion app (iOS native ARKit, Android native ARCore) instead of browser-based tracking.
 **Requirements**: SENS-V2-03, SENS-03, SENS-04, SENS-05, SDK-05
 **Depends on:** Phase 6
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 **Wave 1** *(parallel)*
@@ -219,7 +219,7 @@ Plans:
 
 **Wave 2** *(blocked on 06.1-01)*
 
-- [ ] 06.1-03-PLAN.md — phone.ts WebXR branch integration + phone.html tracking-mode badge (D-05 badge, D-06 branch lock, D-02/D-03 wiring, D-04 fallback preserved) (SENS-V2-03, SENS-05, SENS-03, SENS-04, SDK-05)
+- [x] 06.1-03-PLAN.md — phone.ts WebXR branch integration + phone.html tracking-mode badge (D-05 badge, D-06 branch lock, D-02/D-03 wiring, D-04 fallback preserved) (SENS-V2-03, SENS-05, SENS-03, SENS-04, SDK-05)
 
 **Wave 3** *(blocked on 06.1-03)*
 
