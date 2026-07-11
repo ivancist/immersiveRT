@@ -923,37 +923,69 @@ function startSensorPipeline(zuptThreshold: number, kalmanQ: number): void {
     // orientation. World-frame integration is rotation-invariant.
     const wa = rotateDeviceToWorld(ax, ay, az, primaryQuat);
 
-    // ZUPT stillness detection + Kalman position integration (world frame).
-    const isStill = zupt.update(mag, Date.now());
-    const rawPx = kalmans[0].predict(wa.x, dtSec);
-    const rawPy = kalmans[1].predict(wa.y, dtSec);
-    const rawPz = kalmans[2].predict(wa.z, dtSec);
-
-    // Bounded positions — T-05-16: drift cannot grow without limit.
+    // Bounded-clamp helper — reused identically for Kalman and camera-derived
+    // position/gesture values before they enter the packet (Pitfall 4 / V5).
     const clamp = (v: number, lim: number): number => Math.min(lim, Math.max(-lim, v));
+
+    // ── Position source branch (D-06): decided once at calibration via the
+    // useWebXr closure flag from startSensorPipeline's top; never hands off
+    // mid-session. ──────────────────────────────────────────────────────────
+    let rawPx: number;
+    let rawPy: number;
+    let rawPz: number;
+    let driftConf: number;
+    let isStill = false;
+
+    if (useWebXr && xrTracker) {
+      // Camera-derived pose (SENS-V2-03). WebXrPoseTracker.getState() freezes at
+      // last-known-good with driftConfidence 0 on tracking loss (Plan 01
+      // Pitfall 5), so no mid-session hand-off to Kalman ever occurs (D-06).
+      // D-03: dx/dy/dz is the continuous rolling ~300ms delta — no ZUPT-gated
+      // reset is applied in this branch.
+      const st = xrTracker.getState();
+      rawPx = st.x;
+      rawPy = st.y;
+      rawPz = st.z;
+      driftConf = st.driftConfidence; // D-02
+      gestureDisplacement = {
+        x: clamp(st.dx, GESTURE_MAX),
+        y: clamp(st.dy, GESTURE_MAX),
+        z: clamp(st.dz, GESTURE_MAX),
+      };
+    } else {
+      // ZUPT stillness detection + Kalman position integration (world frame,
+      // D-04 fallback — unchanged from Plan 07).
+      isStill = zupt.update(mag, Date.now());
+      rawPx = kalmans[0].predict(wa.x, dtSec);
+      rawPy = kalmans[1].predict(wa.y, dtSec);
+      rawPz = kalmans[2].predict(wa.z, dtSec);
+
+      // Live gesture displacement = position delta from last ZUPT origin (bounded).
+      gestureDisplacement = {
+        x: clamp(rawPx - gestureOrigin.x, GESTURE_MAX),
+        y: clamp(rawPy - gestureOrigin.y, GESTURE_MAX),
+        z: clamp(rawPz - gestureOrigin.z, GESTURE_MAX),
+      };
+
+      // ZUPT fired: save completed gesture, reset velocity + origin, zero live displacement.
+      if (isStill) {
+        lastCompletedGesture = { ...gestureDisplacement }; // retained for Phase 6/8
+        kalmans[0].resetVelocity();
+        kalmans[1].resetVelocity();
+        kalmans[2].resetVelocity();
+        gestureOrigin = { x: rawPx, y: rawPy, z: rawPz };
+        gestureDisplacement = { x: 0, y: 0, z: 0 };
+      }
+
+      // Drift confidence: axis-averaged Kalman covariance-derived scalar.
+      driftConf = (kalmans[0].driftConfidence() + kalmans[1].driftConfidence() + kalmans[2].driftConfidence()) / 3;
+    }
+
+    // Bounded positions — T-05-16 / Pitfall 4: drift cannot grow without limit,
+    // camera and Kalman values pass through the identical clamp before the packet.
     const pxBounded = clamp(rawPx, POSITION_MAX);
     const pyBounded = clamp(rawPy, POSITION_MAX);
     const pzBounded = clamp(rawPz, POSITION_MAX);
-
-    // Live gesture displacement = position delta from last ZUPT origin (bounded).
-    gestureDisplacement = {
-      x: clamp(rawPx - gestureOrigin.x, GESTURE_MAX),
-      y: clamp(rawPy - gestureOrigin.y, GESTURE_MAX),
-      z: clamp(rawPz - gestureOrigin.z, GESTURE_MAX),
-    };
-
-    // ZUPT fired: save completed gesture, reset velocity + origin, zero live displacement.
-    if (isStill) {
-      lastCompletedGesture = { ...gestureDisplacement }; // retained for Phase 6/8
-      kalmans[0].resetVelocity();
-      kalmans[1].resetVelocity();
-      kalmans[2].resetVelocity();
-      gestureOrigin = { x: rawPx, y: rawPy, z: rawPz };
-      gestureDisplacement = { x: 0, y: 0, z: 0 };
-    }
-
-    // Drift confidence: axis-averaged Kalman covariance-derived scalar.
-    const driftConf = (kalmans[0].driftConfidence() + kalmans[1].driftConfidence() + kalmans[2].driftConfidence()) / 3;
 
     // Dev orientation source-select: default OS-fused; `?orient=madgwick` swaps (D-04).
     let qSource = primaryQuat;
