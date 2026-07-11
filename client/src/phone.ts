@@ -19,6 +19,7 @@ import { eulerToQuat, updateMadgwick, rampBeta } from './sensor/orientation';
 import { ZUPTDetector } from './sensor/zupt';
 import { Kalman1D } from './sensor/kalman';
 import { updateOverlay } from './sensor/devOverlay';
+import { isXrSupported, WebXrPoseTracker, startWebXrPoseTracking } from './sensor/webxr';
 import type { SensorPacket, Quaternion, Vector3 } from './types';
 
 // Marks this file as an ES module (prevents global-scope collision with room.ts).
@@ -62,6 +63,11 @@ let touchListenersAttached = false;
 
 // ── Dev source-select flag (Plan 07 / D-04) ──────────────────────────────────
 let useMadgwick = false;
+
+// ── WebXR camera-tracking support flag (Phase 06.1 / D-05, D-06) ────────────
+// Set once by isXrSupported() in onPlayerReady, before startSensorPipeline
+// reads it to decide the position-source branch for the whole session.
+let webXrSupported = false;
 
 // Promise resolvers for WS pair / reconnect request/response.
 let _pairResolve: ((msg: SignalingMessage) => void) | null = null;
@@ -848,6 +854,17 @@ function startSensorPipeline(zuptThreshold: number, kalmanQ: number): void {
     useMadgwick = new URLSearchParams(location.search).get('orient') === 'madgwick';
   }
 
+  // WebXR camera-tracking branch decision — locked once for the whole session (D-06).
+  // webXrSupported was set by isXrSupported() in onPlayerReady before calibration.
+  const useWebXr = webXrSupported;
+  const xrTracker = useWebXr ? new WebXrPoseTracker(300) : null;
+  if (useWebXr && xrTracker) {
+    // Fire-and-forget: the module drives its own XR requestAnimationFrame loop
+    // feeding the tracker. Falls back silently (tracker stays frozen at 0,0,0
+    // with driftConfidence 0) if the session request fails.
+    startWebXrPoseTracking(xrTracker);
+  }
+
   // Attach touch listeners once per lifetime (idempotent guard inside).
   attachTouchListeners();
 
@@ -1026,6 +1043,16 @@ function onPlayerReady(msg: SignalingMessage): void {
     showView('view-active');
     return;
   }
+
+  // Phase 06.1 D-05: feature-detect WebXR camera-tracking support once, before the
+  // calibrating screen shows. isXrSupported() resolves within milliseconds — well
+  // inside the 3-second calibration window — so no await is required here; the
+  // value is stable before startSensorPipeline runs.
+  isXrSupported().then(function(supported) {
+    webXrSupported = supported;
+    const badge = document.getElementById('tracking-mode-badge');
+    if (badge) { badge.textContent = supported ? 'Camera Tracking' : 'Motion Only'; }
+  });
 
   // Phase 5 D-08: show hold-still calibration scene, then auto-advance to active view.
   showView('view-calibrating');
