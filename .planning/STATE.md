@@ -5,10 +5,10 @@ milestone_name: milestone
 current_phase: 06.1
 current_phase_name: camera-assisted-spatial-tracking
 status: planning
-stopped_at: Phase 06 complete — phone-disconnect bug fixed; Phase 06.1 inserted (camera-assisted spatial tracking), not yet planned
-last_updated: "2026-07-11T08:05:26.756Z"
-last_activity: 2026-07-10
-last_activity_desc: Phase 06 execution started
+stopped_at: Phase 06.1 context gathered
+last_updated: "2026-07-11T09:32:18.938Z"
+last_activity: 2026-07-11
+last_activity_desc: Phase 06.1 inserted after Phase 6 (IMU dead-reckoning drift unfixable; pivoting to camera-assisted tracking)
 progress:
   total_phases: 9
   completed_phases: 6
@@ -179,6 +179,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-10T23:44:24.950Z
-Stopped at: Phase 06 UI-SPEC approved
-Resume file: .planning/phases/06-desktop-receive-decode-and-rendering/06-UI-SPEC.md
+Last session: 2026-07-11T09:32:18.933Z
+Stopped at: Phase 06.1 context gathered
+Resume file: .planning/phases/06.1-camera-assisted-spatial-tracking-replace-augment-imu-only-po/06.1-CONTEXT.md
