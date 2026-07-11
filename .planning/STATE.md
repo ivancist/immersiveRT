@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 06.1
-current_phase_name: camera-assisted-spatial-tracking
-status: planning
+current_phase_name: camera-assisted-spatial-tracking-replace-augment-imu-only-po
+status: executing
 stopped_at: Phase 06.1 context gathered
-last_updated: "2026-07-11T09:32:18.938Z"
+last_updated: "2026-07-11T23:44:11.277Z"
 last_activity: 2026-07-11
-last_activity_desc: Phase 06.1 inserted after Phase 6 (IMU dead-reckoning drift unfixable; pivoting to camera-assisted tracking)
+last_activity_desc: Phase 06.1 execution started
 progress:
   total_phases: 9
   completed_phases: 6
-  total_plans: 27
-  completed_plans: 27
+  total_plans: 31
+  completed_plans: 28
   percent: 67
 ---
 
@@ -24,13 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** Phone motion feels physically immediate on screen — sub-20ms sensor delivery from phone to desktop, lowest possible latency.
-**Current focus:** Phase 06.1 — camera-assisted-spatial-tracking (inserted)
+**Current focus:** Phase 06.1 — camera-assisted-spatial-tracking-replace-augment-imu-only-po
 
 ## Current Position
 
-Phase: 06.1 (camera-assisted-spatial-tracking) — NOT PLANNED
-Status: Inserted urgent phase, awaiting /gsd-plan-phase 06.1
-Last activity: 2026-07-11 — Phase 06.1 inserted after Phase 6 (IMU dead-reckoning drift unfixable; pivoting to camera-assisted tracking)
+Phase: 06.1 (camera-assisted-spatial-tracking-replace-augment-imu-only-po) — EXECUTING
+Plan: 2 of 4 in current phase
+Status: Ready to execute
+Last activity: 2026-07-11 — Phase 06.1 execution started
 
 Progress: [███████░░░] 67%
 
@@ -82,6 +83,7 @@ Progress: [███████░░░] 67%
 | Phase 06 P04 | 61 | 3 tasks | 2 files |
 | Phase 06 P06-05 | 240 | 2 tasks | 4 files |
 | Phase quick-260711-0lh P01 | 8min | 3 tasks | 2 files |
+| Phase 06.1 P01 | 3min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -143,6 +145,8 @@ Recent decisions affecting current work:
 - [Phase ?]: sensorPipelineRunning flag in phone.ts: server replays player-ready on every desktop reconnect; phone must skip recalibration when already active
 - [Phase ?]: Per-frame emissive touch flash: live state.touchActive check in updateScene rAF loop — no setTimeout, no timers, no race conditions
 - [Phase ?]: Fixed rotateDeviceToWorld to apply primaryQuat directly (not conjugate) - matches scene.ts device-to-world convention, resolving huge position drift
+- [Phase ?]: Phase 06.1 Plan 01: WebXrPoseTracker.ingest() takes an optional nowMs param (default performance.now()) beyond the plan's literal 2-arg signature, for deterministic unit testing
+- [Phase ?]: Phase 06.1 Plan 01: Hand-written ambient client/src/webxr.d.ts (no @types/webxr dependency) per RESEARCH Open Q1 option (a)
 
 ### Pending Todos
 
@@ -179,6 +183,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-11T09:32:18.933Z
+Last session: 2026-07-11T23:43:45.713Z
 Stopped at: Phase 06.1 context gathered
 Resume file: .planning/phases/06.1-camera-assisted-spatial-tracking-replace-augment-imu-only-po/06.1-CONTEXT.md

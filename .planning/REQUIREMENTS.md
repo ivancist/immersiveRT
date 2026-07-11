@@ -57,7 +57,7 @@
 - [ ] **SDK-02**: Imperative API: `platform.getPlayerInput(playerId)` returns `{ orientation: Quaternion, gestureDisplacement: Vector3, deadReckoningPosition: Vector3, driftConfidence: number, touch: TouchState }`
 - [ ] **SDK-03**: Event API: `platform.on('imuUpdate', (playerId, data) => ...)`, `platform.on('playerJoin', id => ...)`, `platform.on('playerLeave', id => ...)`, `platform.on('playerReconnect', id => ...)`
 - [ ] **SDK-04**: Developer latency overlay: single-line include renders rolling avg latency, jitter, packet loss %, ICE state per player — visible on desktop
-- [ ] **SDK-05**: SDK exposes `deadReckoningPosition` (not `position`) with `driftConfidence` scalar — naming makes drift nature explicit to game developers
+- [x] **SDK-05**: SDK exposes `deadReckoningPosition` (not `position`) with `driftConfidence` scalar — naming makes drift nature explicit to game developers
 - [ ] **SDK-06**: Raw orientation quaternion available via `platform.getRawInput(playerId).orientationRaw` (no slerp) for games that manage their own interpolation
 
 ### Demo Game
@@ -141,12 +141,12 @@
 | DESK-03 | Phase 6 | Complete |
 | DESK-04 | Phase 6 | Complete |
 | DESK-05 | Phase 6 | Complete |
-| SENS-V2-03 | Phase 06.1 | Pending |
+| SENS-V2-03 | Phase 06.1 | Complete |
 | SDK-01 | Phase 7 | Pending |
 | SDK-02 | Phase 7 | Pending |
 | SDK-03 | Phase 7 | Pending |
 | SDK-04 | Phase 7 | Pending |
-| SDK-05 | Phase 7 | Pending |
+| SDK-05 | Phase 7 | Complete |
 | SDK-06 | Phase 7 | Pending |
 | DEMO-01 | Phase 8 | Pending |
 | DEMO-02 | Phase 8 | Pending |
