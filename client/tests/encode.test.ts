@@ -141,6 +141,68 @@ describe('safeFloat', () => {
 });
 
 // ---------------------------------------------------------------------------
+// encodePacket — camera-sourced position (Pitfall 4 / V5)
+//
+// Proves that camera-derived px/py/pz values pass through the exact same
+// safeFloat() input-validation path as Kalman-derived values, and that the
+// 36-byte encoder is source-agnostic (D-01) — it never branches on where
+// px/py/pz numerically came from. This is a regression guard only; encode.ts
+// is NOT modified by this test file.
+// ---------------------------------------------------------------------------
+
+describe('encodePacket — camera-sourced position (Pitfall 4 / V5)', () => {
+  it('camera-sourced px: NaN encodes to finite float16 value 0 at offset 21', () => {
+    const pkt: SensorPacket = { ...basePkt, px: NaN };
+    const result = encodePacket(pkt);
+    const view = new DataView(result.buffer, result.byteOffset);
+    const px = getFloat16(view, 21, true);
+    expect(isFinite(px)).toBe(true);
+    expect(px).toBe(0);
+  });
+
+  it('camera-sourced py: Infinity encodes to finite float16 value 0 at offset 23', () => {
+    const pkt: SensorPacket = { ...basePkt, py: Infinity };
+    const result = encodePacket(pkt);
+    const view = new DataView(result.buffer, result.byteOffset);
+    const py = getFloat16(view, 23, true);
+    expect(isFinite(py)).toBe(true);
+    expect(py).toBe(0);
+  });
+
+  it('camera-sourced pz: -Infinity encodes to finite float16 value 0 at offset 25', () => {
+    const pkt: SensorPacket = { ...basePkt, pz: -Infinity };
+    const result = encodePacket(pkt);
+    const view = new DataView(result.buffer, result.byteOffset);
+    const pz = getFloat16(view, 25, true);
+    expect(isFinite(pz)).toBe(true);
+    expect(pz).toBe(0);
+  });
+
+  it('camera-sourced px at POSITION_MAX bound (100 m) round-trips within float16 tolerance (D-01)', () => {
+    const pkt: SensorPacket = { ...basePkt, px: 100 };
+    const result = encodePacket(pkt);
+    const view = new DataView(result.buffer, result.byteOffset);
+    const recovered = getFloat16(view, 21, true);
+    expect(Math.abs(recovered - 100)).toBeLessThan(0.1);
+  });
+
+  it('camera-sourced and kalman-sourced packets with identical numeric px/py/pz encode byte-identical output (source-agnostic encoder, D-01)', () => {
+    const cameraSourced: SensorPacket = { ...basePkt, px: 1.5, py: -2.25, pz: 0.75 };
+    const kalmanSourced: SensorPacket = { ...basePkt, px: 1.5, py: -2.25, pz: 0.75 };
+
+    const cameraBuf = new ArrayBuffer(BUF_SIZE);
+    const kalmanBuf = new ArrayBuffer(BUF_SIZE);
+
+    const cameraResult = encodePacket(cameraSourced, cameraBuf);
+    const kalmanResult = encodePacket(kalmanSourced, kalmanBuf);
+
+    expect(cameraResult.byteLength).toBe(36);
+    expect(kalmanResult.byteLength).toBe(36);
+    expect(Array.from(cameraResult)).toEqual(Array.from(kalmanResult));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // computeCalibration — pure math, no DeviceMotion dependency
 // ---------------------------------------------------------------------------
 
