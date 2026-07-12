@@ -83,18 +83,25 @@ final class WebTransportSignaling: SignalingTransport {
         connection = conn
 
         do {
+            print("[WT-DEBUG] waitUntilReady starting")
             try await waitUntilReady(conn)
+            print("[WT-DEBUG] connection ready, opening control stream")
             try await openControlStream(conn)
+            print("[WT-DEBUG] control stream opened, performing extended-CONNECT")
             try await performExtendedConnect(conn)
+            print("[WT-DEBUG] extended-CONNECT succeeded, sessionID=\(webTransportSessionID.map(String.init) ?? "nil")")
 
             // Mirrors phone.ts's startPhoneClient(): the push listener is
             // started BEFORE the register send so no early server push is
             // dropped while the register round trip is still in flight.
             startInboundStreamListener(conn)
+            print("[WT-DEBUG] sending register envelope")
             _ = try await sendAndDrain(
                 SignalingEnvelope(type: SignalingEnvelope.SignalingType.register, from: myId, to: "", payload: [:])
             )
+            print("[WT-DEBUG] register round trip succeeded")
         } catch {
+            print("[WT-DEBUG] connect() failed: \(error)")
             connection = nil
             connectStream = nil
             controlStream = nil
@@ -188,12 +195,16 @@ final class WebTransportSignaling: SignalingTransport {
         try await stream.send(Data(frame), endOfStream: false)
 
         let response = try await stream.receive(atLeast: 1, atMost: 4096)
+        let hex = response.content.map { String(format: "%02x", $0) }.joined(separator: " ")
+        print("[WT-DEBUG] extended-CONNECT response (\(response.content.count) bytes, endOfStream=\(response.metadata.endOfStream)): \(hex)")
         guard response.content.contains(Self.qpackIndexedStatus200) else {
+            print("[WT-DEBUG] response did NOT contain expected status-200 byte 0x\(String(format: "%02x", Self.qpackIndexedStatus200))")
             throw WebTransportSignalingError.wtNet(nil)
         }
 
         connectStream = stream
         webTransportSessionID = stream.streamID
+        print("[WT-DEBUG] performExtendedConnect: streamID=\(stream.streamID)")
     }
 
     // MARK: - Request/send (RESEARCH.md Pattern 1 — sendWtRequest/sendWtMessage)
@@ -209,10 +220,12 @@ final class WebTransportSignaling: SignalingTransport {
             throw WebTransportSignalingError.wtNet(nil)
         }
         let stream = try await conn.openStream(directionality: .bidirectional)
+        print("[WT-DEBUG] sendAndDrain: opened stream \(stream.streamID) for type=\(envelope.type)")
         var payload = Http3Framing.wtStreamTypePrefix(bidi: true)
         payload.append(contentsOf: Http3Framing.encodeVarint(sessionID))
         payload.append(contentsOf: try JSONEncoder().encode(envelope))
         try await stream.send(Data(payload), endOfStream: true)
+        print("[WT-DEBUG] sendAndDrain: sent \(payload.count) bytes on stream \(stream.streamID)")
 
         var buffer = Data()
         while true {
