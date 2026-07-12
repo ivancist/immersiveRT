@@ -230,7 +230,7 @@ Plans:
 **Goal:** Reimplement the phone client's transport stack natively in Swift (`mobile/ios-app/immersiveRT`, which already has QR scan + pairing-token extraction via QRScannerView.swift/QRTokenParser.swift): WebTransport signaling connection, join-room/pairing flow, WebRTC unreliable data channel fan-out to all desktops in the room, heartbeat, and the 36-byte binary sensor packet schema v1 (Phase 5). Orientation is sourced from CoreMotion's OS-fused device-motion attitude quaternion (mirroring the web client's `DeviceOrientationEvent` — no Madgwick pass, no ARKit yet); position stays at parity with the web client's Kalman dead-reckoning output. This phase proves the native app reaches feature parity with the browser phone client before ARKit tracking is layered on in Phase 06.3.
 **Requirements**: PHONE-03, PHONE-04, PHONE-05, PHONE-06, PHONE-07 (native re-implementation; PHONE-01 stays web-only — N/A for native; SENS-01..05 deferred to 06.3 per D-01; SENS-06 optional scope-fill)
 **Depends on:** Phase 6 (desktop decode/render pipeline)
-**Plans:** 1/9 plans executed
+**Plans:** 6/9 plans executed
 
 Plans:
 **Wave 1**
@@ -239,11 +239,11 @@ Plans:
 
 **Wave 2** *(blocked on 06.2-01)*
 
-- [ ] 06.2-02-PLAN.md — Byte-identical SensorPacketEncoder + fixture + QRTokenParser host extraction (PHONE-05, D-09)
-- [ ] 06.2-03-PLAN.md — CoreMotionSource (real OS-fused orientation) + HeartbeatTimer (PHONE-04, PHONE-06, D-09)
-- [ ] 06.2-04-PLAN.md — WebSocketSignaling fallback transport (PHONE-03, PHONE-06, D-05)
-- [ ] 06.2-05-PLAN.md — WebTransport-over-HTTP/3 spike: Http3Framing + WebTransportSignaling (PHONE-03, D-04, D-05)
-- [ ] 06.2-06-PLAN.md — WebRTC dep (legitimacy checkpoint) + PeerConnectionManager fan-out + ICEConfig (PHONE-03)
+- [x] 06.2-02-PLAN.md — Byte-identical SensorPacketEncoder + fixture + QRTokenParser host extraction (PHONE-05, D-09)
+- [x] 06.2-03-PLAN.md — CoreMotionSource (real OS-fused orientation) + HeartbeatTimer (PHONE-04, PHONE-06, D-09)
+- [x] 06.2-04-PLAN.md — WebSocketSignaling fallback transport (PHONE-03, PHONE-06, D-05)
+- [x] 06.2-05-PLAN.md — WebTransport-over-HTTP/3 spike: Http3Framing + WebTransportSignaling (PHONE-03, D-04, D-05)
+- [x] 06.2-06-PLAN.md — WebRTC dep (legitimacy checkpoint) + PeerConnectionManager fan-out + ICEConfig (PHONE-03)
 
 **Wave 3** *(blocked on 06.2-01/03/04/05/06)*
 
