@@ -44,13 +44,33 @@ final class PeerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(PeerConnectionManager.makeDataChannelConfig().maxRetransmits, 0)
     }
 
-    func test_makeDataChannelConfig_maxPacketLifeTimeLeftAtDefault_notSubstituted() {
-        // -1 is WebRTC's documented "unset" sentinel for maxPacketLifeTime
-        // (RTCDataChannelConfiguration.h). Asserting it stays at the default
-        // proves maxPacketLifeTime was never touched as a substitute for
-        // maxRetransmits (RESEARCH.md Anti-Patterns / mutually exclusive
-        // per spec).
-        XCTAssertEqual(PeerConnectionManager.makeDataChannelConfig().maxPacketLifeTime, -1)
+    /// `maxPacketLifeTime` is intentionally NEVER assigned in
+    /// `makeDataChannelConfig()` (see the doc comment there) — this is a
+    /// source-level proof, not a runtime property read. Reading
+    /// `maxPacketLifeTime` on the `stasel/WebRTC` M150 binary crashes with
+    /// `SIGABRT` (an internal `RTC_CHECK`-style abort deep in `WebRTC.framework`,
+    /// confirmed via a live crash on this exact assertion during Task 3
+    /// verification — not a Swift-side bug) when `maxRetransmits` is set and
+    /// `maxPacketLifeTime` was left unset: the header's "-1 if unset"
+    /// documentation describes the C++ `absl::optional` default, but the
+    /// getter itself enforces the two fields' mutual exclusivity by
+    /// aborting on read, not just on simultaneous write. So this test
+    /// verifies non-substitution via source contract instead of a runtime
+    /// property read, which would crash the test process.
+    func test_makeDataChannelConfig_neverAssignsMaxPacketLifeTime_sourceContract() {
+        let source = try! String(
+            contentsOfFile: #filePath.replacingOccurrences(
+                of: "immersiveRTTests/PeerConnectionManagerTests.swift",
+                with: "immersiveRT/WebRTC/PeerConnectionManager.swift"
+            ),
+            encoding: .utf8
+        )
+        XCTAssertFalse(
+            source.contains("maxPacketLifeTime ="),
+            "maxPacketLifeTime must never be assigned — it is mutually exclusive with " +
+            "maxRetransmits per the WebRTC spec, and reading it when unset crashes the " +
+            "stasel/WebRTC M150 binary (SIGABRT), not just setting both together."
+        )
     }
 
     // MARK: - Per-peer fan-out (one pc + one "sensor" channel per peer)
