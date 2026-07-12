@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		00B813523002442300B0793A /* immersiveRT.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = immersiveRT.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		546265F3AAD141E8B2E6B8C7 /* immersiveRTTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = immersiveRTTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +17,32 @@
 			path = immersiveRT;
 			sourceTree = "<group>";
 		};
+		0217408C828942E0B6BB1B12 /* immersiveRTTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = immersiveRTTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXContainerItemProxy section */
+		7B4859BA7ECF45D4AB222FE2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 00B8134A3002442300B0793A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 00B813513002442300B0793A;
+			remoteInfo = immersiveRT;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		00B8134F3002442300B0793A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		38E6E661E119482AA2208522 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +56,7 @@
 			isa = PBXGroup;
 			children = (
 				00B813543002442300B0793A /* immersiveRT */,
+				0217408C828942E0B6BB1B12 /* immersiveRTTests */,
 				00B813533002442300B0793A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				00B813523002442300B0793A /* immersiveRT.app */,
+				546265F3AAD141E8B2E6B8C7 /* immersiveRTTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -70,6 +95,29 @@
 			productReference = 00B813523002442300B0793A /* immersiveRT.app */;
 			productType = "com.apple.product-type.application";
 		};
+		9E99C668861A4CEAAE77FE01 /* immersiveRTTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 10EDA841FFA2492393FC929A /* Build configuration list for PBXNativeTarget "immersiveRTTests" */;
+			buildPhases = (
+				254DB171FBE94B9AB41E3712 /* Sources */,
+				38E6E661E119482AA2208522 /* Frameworks */,
+				0AB185F09FBA4F9280ADA7D5 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1D93ACA5F357426E93841C6E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				0217408C828942E0B6BB1B12 /* immersiveRTTests */,
+			);
+			name = immersiveRTTests;
+			packageProductDependencies = (
+			);
+			productName = immersiveRTTests;
+			productReference = 546265F3AAD141E8B2E6B8C7 /* immersiveRTTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -82,6 +130,10 @@
 				TargetAttributes = {
 					00B813513002442300B0793A = {
 						CreatedOnToolsVersion = 26.6;
+					};
+					9E99C668861A4CEAAE77FE01 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 00B813513002442300B0793A;
 					};
 				};
 			};
@@ -100,12 +152,20 @@
 			projectRoot = "";
 			targets = (
 				00B813513002442300B0793A /* immersiveRT */,
+				9E99C668861A4CEAAE77FE01 /* immersiveRTTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		00B813503002442300B0793A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0AB185F09FBA4F9280ADA7D5 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +182,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		254DB171FBE94B9AB41E3712 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1D93ACA5F357426E93841C6E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 00B813513002442300B0793A /* immersiveRT */;
+			targetProxy = 7B4859BA7ECF45D4AB222FE2 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		00B8135B3002442400B0793A /* Debug */ = {
@@ -318,6 +393,46 @@
 			};
 			name = Release;
 		};
+		0C7CE019602849A8912803A6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4X5VJK7YLN;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ivancist.immersiveRTTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/immersiveRT.app/immersiveRT";
+			};
+			name = Debug;
+		};
+		305F698A865D4425A823E5D0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4X5VJK7YLN;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ivancist.immersiveRTTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/immersiveRT.app/immersiveRT";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -335,6 +450,15 @@
 			buildConfigurations = (
 				00B8135E3002442400B0793A /* Debug */,
 				00B8135F3002442400B0793A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		10EDA841FFA2492393FC929A /* Build configuration list for PBXNativeTarget "immersiveRTTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0C7CE019602849A8912803A6 /* Debug */,
+				305F698A865D4425A823E5D0 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
