@@ -55,7 +55,6 @@ final class WebTransportSignaling: SignalingTransport {
     /// 06.2-09 on-device verification (server-side error was 100%
     /// reproducible across every WT attempt).
     private var controlStream: QUIC.Stream<QUICStream>?
-    private var healthMonitorTask: Task<Void, Never>?
 
     /// QPACK static-table index 25 — `:status: 200` — encoded as an Indexed
     /// Field Line (RFC 9204 §4.5.2): `0xC0 | 25 = 0xD9`. One of two response
@@ -89,13 +88,10 @@ final class WebTransportSignaling: SignalingTransport {
             // started BEFORE the register send so no early server push is
             // dropped while the register round trip is still in flight.
             startInboundStreamListener(conn)
-            startConnectionHealthMonitor(conn)
             _ = try await sendAndDrain(
                 SignalingEnvelope(type: SignalingEnvelope.SignalingType.register, from: myId, to: "", payload: [:])
             )
         } catch {
-            healthMonitorTask?.cancel()
-            healthMonitorTask = nil
             connection = nil
             connectStream = nil
             controlStream = nil
@@ -115,8 +111,6 @@ final class WebTransportSignaling: SignalingTransport {
     }
 
     func close() {
-        healthMonitorTask?.cancel()
-        healthMonitorTask = nil
         connectStream = nil
         controlStream = nil
         connection = nil
@@ -124,39 +118,6 @@ final class WebTransportSignaling: SignalingTransport {
         // explicit `cancel()`/`close()` in this SDK snapshot — unlike the
         // classic `NWConnection`, which does. Connection teardown happens
         // via ARC when the last strong reference is released.
-    }
-
-    /// Actively polls `conn.state` for the connection's lifetime and fires
-    /// `onClosed` on `.failed`/`.cancelled`.
-    ///
-    /// Found necessary during 06.2-09 on-device verification: after
-    /// backgrounding the app and returning, the QUIC connection eventually
-    /// timed out (`nw_connection_group_handle_connection_state_changed ...
-    /// failed with error Operation timed out`), but `TransportManager`
-    /// never learned about it — `startInboundStreamListener`'s reliance on
-    /// `conn.inboundStreams { ... }` throwing on connection failure does
-    /// not reliably fire (the async sequence appears to simply stop rather
-    /// than throw). Without `onClosed` firing, `handleTransportClosed(_:)`
-    /// never runs and the reconnect loop never starts — the app silently
-    /// stayed on "Streaming" with a dead signaling channel indefinitely
-    /// (heartbeat sends into it silently no-op; only the already-negotiated
-    /// WebRTC data channel, unaffected by this, kept delivering motion
-    /// data, masking the problem from a purely visual check). This poll is
-    /// the reliable signal; 1s interval is coarse deliberately — connection
-    /// health, not handshake-latency-sensitive.
-    private func startConnectionHealthMonitor(_ conn: NetworkConnection<QUIC>) {
-        healthMonitorTask = Task { [weak self] in
-            while !Task.isCancelled {
-                switch conn.state {
-                case .failed, .cancelled:
-                    self?.onClosed?("wt-net")
-                    return
-                default:
-                    break
-                }
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-        }
     }
 
     // MARK: - Handshake (RESEARCH.md "Architecture Patterns → Pattern 1")
@@ -376,6 +337,25 @@ final class WebTransportSignaling: SignalingTransport {
         guard let conn = connection, let sessionID = webTransportSessionID else {
             throw WebTransportSignalingError.wtNet(nil)
         }
+
+        // Checked here (not via a separate polling Task — see git history
+        // for why that approach was reverted: a concurrent Task reading
+        // `conn.state` while this method is actively opening/using streams
+        // on the same connection caused unpredictable failures on-device,
+        // including on fresh first-time connects, not just reconnects).
+        // Every send/request/heartbeat funnels through this one function,
+        // so checking synchronously right before use — no concurrent
+        // access, same call path already touching `conn` — still catches a
+        // connection that died while idle (e.g. backgrounded) within one
+        // heartbeat interval (5s) of the next send attempt.
+        switch conn.state {
+        case .failed, .cancelled:
+            onClosed?("wt-net")
+            throw WebTransportSignalingError.wtNet(nil)
+        default:
+            break
+        }
+
         let stream = try await conn.openStream(directionality: .bidirectional)
         var payload = Http3Framing.wtStreamTypePrefix(bidi: true)
         payload.append(contentsOf: Http3Framing.encodeVarint(sessionID))
