@@ -70,15 +70,7 @@ final class HeartbeatTimer {
     func start() {
         currentToken?.cancel()
         currentToken = scheduler.schedule(interval: interval) { [weak self] in
-            guard let self else { return }
-            self.send(
-                SignalingEnvelope(
-                    type: SignalingEnvelope.SignalingType.heartbeat,
-                    from: self.myId(),
-                    to: "",
-                    payload: [:]
-                )
-            )
+            self?.fireNow()
         }
     }
 
@@ -86,5 +78,32 @@ final class HeartbeatTimer {
     func stop() {
         currentToken?.cancel()
         currentToken = nil
+    }
+
+    /// Sends one heartbeat envelope immediately, outside the scheduled
+    /// interval — does not reset or otherwise touch the running timer.
+    ///
+    /// `TransportManager.resumeFromBackground()`'s own doc comment already
+    /// documented the intent this implements ("mirroring `phone.ts`'s
+    /// `visibilitychange` → visible re-arming `requestWakeLock()` and an
+    /// immediate heartbeat send"), but the code only called `start()`,
+    /// which schedules the NEXT heartbeat `interval` seconds out — it does
+    /// not fire one right away. On-device verification (06.2-09) found
+    /// this meant a connection that died while backgrounded went
+    /// undetected for up to a full heartbeat interval (5s) after
+    /// returning to the foreground, since nothing touched the (possibly
+    /// dead) transport until the next scheduled tick. Calling this
+    /// alongside `start()` on resume sends immediately, surfacing a dead
+    /// connection (and triggering reconnect) as soon as the app returns
+    /// to the foreground rather than up to 5s later.
+    func fireNow() {
+        send(
+            SignalingEnvelope(
+                type: SignalingEnvelope.SignalingType.heartbeat,
+                from: myId(),
+                to: "",
+                payload: [:]
+            )
+        )
     }
 }

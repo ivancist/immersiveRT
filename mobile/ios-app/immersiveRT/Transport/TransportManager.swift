@@ -580,6 +580,11 @@ final class TransportManager {
         guard registered else { return }
         motionSource.start()
         heartbeatTimer.start()
+        // `start()` only schedules the NEXT heartbeat `interval` (5s) out —
+        // fire one immediately so a transport that died while backgrounded
+        // is detected (and reconnect triggered) right away rather than up
+        // to 5s later (06.2-09 on-device finding).
+        heartbeatTimer.fireNow()
     }
 }
 
