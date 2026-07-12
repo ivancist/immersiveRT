@@ -230,7 +230,7 @@ Plans:
 **Goal:** Reimplement the phone client's transport stack natively in Swift (`mobile/ios-app/immersiveRT`, which already has QR scan + pairing-token extraction via QRScannerView.swift/QRTokenParser.swift): WebTransport signaling connection, join-room/pairing flow, WebRTC unreliable data channel fan-out to all desktops in the room, heartbeat, and the 36-byte binary sensor packet schema v1 (Phase 5). Orientation is sourced from CoreMotion's OS-fused device-motion attitude quaternion (mirroring the web client's `DeviceOrientationEvent` — no Madgwick pass, no ARKit yet); position stays at parity with the web client's Kalman dead-reckoning output. This phase proves the native app reaches feature parity with the browser phone client before ARKit tracking is layered on in Phase 06.3.
 **Requirements**: PHONE-03, PHONE-04, PHONE-05, PHONE-06, PHONE-07 (native re-implementation; PHONE-01 stays web-only — N/A for native; SENS-01..05 deferred to 06.3 per D-01; SENS-06 optional scope-fill)
 **Depends on:** Phase 6 (desktop decode/render pipeline)
-**Plans:** 7/9 plans executed
+**Plans:** 8/9 plans executed
 
 Plans:
 **Wave 1**
@@ -251,7 +251,7 @@ Plans:
 
 **Wave 4** *(blocked on 06.2-07)*
 
-- [ ] 06.2-08-PLAN.md — SessionState + ActiveSessionView UI + Wake Lock lifecycle (PHONE-03, PHONE-07)
+- [x] 06.2-08-PLAN.md — SessionState + ActiveSessionView UI + Wake Lock lifecycle (PHONE-03, PHONE-07)
 
 **Wave 5** *(blocked on 06.2-02/06/07/08)*
 
