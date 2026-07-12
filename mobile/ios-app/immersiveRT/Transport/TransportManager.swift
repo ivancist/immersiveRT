@@ -92,6 +92,14 @@ final class TransportManager {
     /// 10s timeout on the WebSocket-fallback initial connect (phone.ts:412-429).
     private let wsConnectTimeout: TimeInterval
 
+    /// Timeout on the initial WebTransport attempt. Added after on-device
+    /// verification (06.2-09) showed the hand-rolled QUIC client can sit in
+    /// `connect()` for 100+ seconds before failing — unlike a browser's
+    /// native `WebTransport` (whose `.ready` promise self-times-out),
+    /// nothing here previously bounded the wait, leaving the UI stuck on
+    /// "Connecting…" far longer than the D-05 dual-path design intends.
+    private let wtConnectTimeout: TimeInterval
+
     // MARK: - Reconnect shape (attemptReconnect(), phone.ts:507-631 — injectable for tests)
 
     private let reconnectInitialDelay: TimeInterval
@@ -123,6 +131,7 @@ final class TransportManager {
         heartbeatInterval: TimeInterval = 5.0,
         clock: TransportManagerClock = SystemTransportManagerClock(),
         wsConnectTimeout: TimeInterval = 10.0,
+        wtConnectTimeout: TimeInterval = 8.0,
         reconnectInitialDelay: TimeInterval = 3.0,
         reconnectBetweenDelay: TimeInterval = 10.0,
         maxReconnectAttempts: Int = 13,
@@ -135,6 +144,7 @@ final class TransportManager {
         self.motionSource = motionSource
         self.clock = clock
         self.wsConnectTimeout = wsConnectTimeout
+        self.wtConnectTimeout = wtConnectTimeout
         self.reconnectInitialDelay = reconnectInitialDelay
         self.reconnectBetweenDelay = reconnectBetweenDelay
         self.maxReconnectAttempts = maxReconnectAttempts
@@ -223,16 +233,20 @@ final class TransportManager {
         applyPairAck(pairResp)
     }
 
-    /// Attempt 1: WebTransport. No explicit timeout on this specific call
-    /// (unlike reconnect's 5s race) — mirrors `startPhoneClient()`'s bare
-    /// `await transport.ready`. Returns `nil` on any failure so the caller
-    /// falls through to WebSocket.
+    /// Attempt 1: WebTransport, bounded by `wtConnectTimeout` (8s default —
+    /// matches the reconnect path's 5s race in spirit; a browser's native
+    /// `WebTransport.ready` self-times-out, the hand-rolled QUIC client here
+    /// does not, so this is enforced explicitly). Returns `nil` on any
+    /// failure or timeout so the caller falls through to WebSocket.
     private func tryInitialWebTransport(host: String) async -> SignalingTransport? {
         let candidate = makeWebTransport(host, myId)
         do {
-            try await candidate.connect()
+            try await withTransportTimeout(wtConnectTimeout, clock: clock) {
+                try await candidate.connect()
+            }
             return candidate
         } catch {
+            candidate.close()
             return nil
         }
     }

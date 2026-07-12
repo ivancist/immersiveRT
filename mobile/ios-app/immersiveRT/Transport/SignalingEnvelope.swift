@@ -20,6 +20,29 @@ struct SignalingEnvelope: Codable {
         self.to = to
         self.payload = payload
     }
+
+    // The server's ack/error responses (pair-ack, pair-error, join-ack,
+    // join-error, leave-ack) are built ad-hoc via `serde_json::json!()` in
+    // `room_registry.rs`, not through the Rust `SignalingEnvelope` struct —
+    // they omit `from`/`to` entirely, only ever sending `{"type", "payload"}`.
+    // The existing JS client tolerates this since it's untyped; Swift's
+    // default Codable synthesis does not, and would silently fail to decode
+    // (via WebSocketSignaling's `try?`) every ack/error message, leaving the
+    // waiting continuation hanging forever. Default missing `from`/`to` to
+    // "" to match the real wire behavior rather than the struct's aspirational
+    // shape (found during 06.2-09 on-device verification: pairing succeeded
+    // server-side but the client never left "Connecting…").
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(String.self, forKey: .type)
+        from = try container.decodeIfPresent(String.self, forKey: .from) ?? ""
+        to = try container.decodeIfPresent(String.self, forKey: .to) ?? ""
+        payload = try container.decodeIfPresent([String: AnyCodable].self, forKey: .payload) ?? [:]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, from, to, payload
+    }
 }
 
 extension SignalingEnvelope {

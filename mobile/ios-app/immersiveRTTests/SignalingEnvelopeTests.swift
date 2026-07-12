@@ -75,6 +75,39 @@ final class SignalingEnvelopeTests: XCTestCase {
         XCTAssertNil(payload["iceServers"])
     }
 
+    /// The real server's ack/error responses (pair-ack, pair-error, join-ack,
+    /// join-error, leave-ack) are built ad-hoc via `serde_json::json!()` in
+    /// `room_registry.rs`/`ws_server.rs`, never through the Rust
+    /// `SignalingEnvelope` struct — they only ever send `{"type","payload"}`,
+    /// omitting `from`/`to` entirely. Discovered on-device (06.2-09): the
+    /// default Codable synthesis previously required both fields, so every
+    /// ack silently failed to decode (swallowed by `try?` in
+    /// `WebSocketSignaling.decode(_:)`), leaving the pairing continuation
+    /// hanging forever with the UI stuck on "Connecting…".
+    func test_decode_toleratesMissingFromAndTo_matchingRealServerAckShape() throws {
+        let json = """
+        {"type":"pair-ack","payload":{"slot":2,"room_code":"ABCD12"}}
+        """.data(using: .utf8)!
+
+        let envelope = try JSONDecoder().decode(SignalingEnvelope.self, from: json)
+
+        XCTAssertEqual(envelope.type, "pair-ack")
+        XCTAssertEqual(envelope.from, "")
+        XCTAssertEqual(envelope.to, "")
+        XCTAssertEqual(envelope.slot, 2)
+    }
+
+    func test_decode_toleratesMissingPayload() throws {
+        let json = """
+        {"type":"leave-ack"}
+        """.data(using: .utf8)!
+
+        let envelope = try JSONDecoder().decode(SignalingEnvelope.self, from: json)
+
+        XCTAssertEqual(envelope.type, "leave-ack")
+        XCTAssertTrue(envelope.payload.isEmpty)
+    }
+
     // MARK: - Known message types
 
     func test_signalingType_knownConstants() {
