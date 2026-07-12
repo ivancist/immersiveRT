@@ -2,3 +2,18 @@ certs/
 target/
 .env
 .planning/research/.cache/
+
+# macOS
+.DS_Store
+
+# Xcode
+mobile/ios-app/*.xcodeproj/xcuserdata/
+mobile/ios-app/*.xcodeproj/project.xcworkspace/xcuserdata/
+mobile/ios-app/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+mobile/ios-app/*/xcuserdata/
+mobile/ios-app/DerivedData/
+mobile/ios-app/build/
+
+# Claude Code local settings and worktree scratch dirs
+.claude/settings.local.json
+.claude/worktrees/
