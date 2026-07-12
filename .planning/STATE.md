@@ -5,10 +5,10 @@ milestone_name: milestone
 current_phase: 06.1
 current_phase_name: camera-assisted-spatial-tracking-replace-augment-imu-only-po
 status: executing
-stopped_at: Completed 06.1-03-PLAN.md
-last_updated: "2026-07-11T23:53:22.973Z"
-last_activity: 2026-07-11
-last_activity_desc: Phase 06.1 execution started
+stopped_at: Blocked at 06.1-04 checkpoint — no ARCore Android hardware available to run on-device verification
+last_updated: "2026-07-12T00:00:00.000Z"
+last_activity: 2026-07-12
+last_activity_desc: Phase 06.1 Plans 01-03 complete and gate-clean; 06.1-04 human-verify checkpoint deferred (no test device)
 progress:
   total_phases: 9
   completed_phases: 6
@@ -159,6 +159,7 @@ None yet.
 
 ### Blockers/Concerns
 
+- Phase 06.1 OPEN: Plan 06.1-04 (on-device WebXR/ARCore verification — badge, drift resolution SENS-V2-03, freeze-on-loss D-06, battery/thermal, iOS fallback D-04) deferred at user's request — no ARCore-capable Android device available. No SUMMARY.md was written for 06.1-04 so it stays "incomplete"; re-run `/gsd-execute-phase 06.1` or `/gsd-verify-work 06.1` once hardware is available to re-surface the checkpoint. Phase is NOT marked complete in ROADMAP.md.
 - Phase 1 Plan 02 RESOLVED: WebTransport TLS cert requirements — Chrome echo round-trip verified; NSS store install required on Debian/Ubuntu
 - Phase 2 critical: TURN credential endpoint must generate at connection-start (not page load) to prevent staleness
 - Phase 5: Madgwick beta empirical tuning (0.1 default, ramp 0.2–0.3 at cold start) requires real-device validation
@@ -188,6 +189,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-11T23:53:22.968Z
-Stopped at: Completed 06.1-03-PLAN.md
-Resume file: None
+Last session: 2026-07-12T00:00:00.000Z
+Stopped at: Blocked at 06.1-04 checkpoint — no ARCore Android hardware available
+Resume file: .planning/phases/06.1-camera-assisted-spatial-tracking-replace-augment-imu-only-po/06.1-04-PLAN.md
