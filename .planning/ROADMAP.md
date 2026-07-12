@@ -225,6 +225,49 @@ Plans:
 
 - [ ] 06.1-04-PLAN.md — On-device manual verification checkpoint: ARCore drift resolution, freeze-on-loss (D-06), badge/fallback, battery/thermal escape-hatch (SENS-V2-03)
 
+### Phase 06.2: iOS Native Client — Transport Parity (INSERTED)
+
+**Goal:** Reimplement the phone client's transport stack natively in Swift (`mobile/ios-app/immersiveRT`, which already has QR scan + pairing-token extraction via QRScannerView.swift/QRTokenParser.swift): WebTransport signaling connection, join-room/pairing flow, WebRTC unreliable data channel fan-out to all desktops in the room, heartbeat, and the 36-byte binary sensor packet schema v1 (Phase 5). Orientation is sourced from CoreMotion's OS-fused device-motion attitude quaternion (mirroring the web client's `DeviceOrientationEvent` — no Madgwick pass, no ARKit yet); position stays at parity with the web client's Kalman dead-reckoning output. This phase proves the native app reaches feature parity with the browser phone client before ARKit tracking is layered on in Phase 06.3.
+**Requirements**: PHONE-03, PHONE-04, PHONE-05, PHONE-06, PHONE-07 (native re-implementation; PHONE-01 stays web-only — N/A for native; SENS-01..05 deferred to 06.3 per D-01; SENS-06 optional scope-fill)
+**Depends on:** Phase 6 (desktop decode/render pipeline)
+**Plans:** 9 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 06.2-01-PLAN.md — XCTest target + SignalingEnvelope + SignalingTransport protocol (foundation)
+
+**Wave 2** *(blocked on 06.2-01)*
+
+- [ ] 06.2-02-PLAN.md — Byte-identical SensorPacketEncoder + fixture + QRTokenParser host extraction (PHONE-05, D-09)
+- [ ] 06.2-03-PLAN.md — CoreMotionSource (real OS-fused orientation) + HeartbeatTimer (PHONE-04, PHONE-06, D-09)
+- [ ] 06.2-04-PLAN.md — WebSocketSignaling fallback transport (PHONE-03, PHONE-06, D-05)
+- [ ] 06.2-05-PLAN.md — WebTransport-over-HTTP/3 spike: Http3Framing + WebTransportSignaling (PHONE-03, D-04, D-05)
+- [ ] 06.2-06-PLAN.md — WebRTC dep (legitimacy checkpoint) + PeerConnectionManager fan-out + ICEConfig (PHONE-03)
+
+**Wave 3** *(blocked on 06.2-01/03/04/05/06)*
+
+- [ ] 06.2-07-PLAN.md — TransportManager dual-path connect + pair + fan-out + reconnect loop (PHONE-03, PHONE-06, D-04)
+
+**Wave 4** *(blocked on 06.2-07)*
+
+- [ ] 06.2-08-PLAN.md — SessionState + ActiveSessionView UI + Wake Lock lifecycle (PHONE-03, PHONE-07)
+
+**Wave 5** *(blocked on 06.2-02/06/07/08)*
+
+- [ ] 06.2-09-PLAN.md — On-device verification: mkcert trust, WT spike decision, CoreMotion axis, WebRTC fan-out, Wake Lock (PHONE-03/04/05/07)
+
+### Phase 06.3: iOS Native Client — ARKit World Tracking (INSERTED)
+
+**Goal:** Swap the native iOS phone client's position source from CoreMotion dead-reckoning (the Phase 06.2 parity baseline) to ARKit `ARSession` world tracking for precise 6DOF position, keeping orientation semantics compatible with the existing desktop decode/SLERP pipeline (Phase 6) and SDK naming (Phase 7 — `deadReckoningPosition`/`driftConfidence`). This is the native-companion-app escape hatch Phase 06.1 explicitly anticipated for iOS (Safari has no WebXR `immersive-ar`), invoked now instead of the planned web-based VIO/SLAM research spike. Includes a mandatory on-device ARKit tracking-precision verification checkpoint that is a go/no-go gate for the project, mirroring Phase 06.1's Wave 3 on-device checkpoint pattern.
+**Requirements**: SENS-V2-03, SDK-05 (reused from Phase 06.1); TBD for any new ARKit-specific requirement IDs — run `/gsd-discuss-phase 06.3` or `/gsd-spec-phase 06.3` to confirm
+**Depends on:** Phase 06.2 (native transport parity must land first); references Phase 06.1's WebXR pose-tracking conventions (webxr.ts, phone.ts D-02/D-03/D-05/D-06) as a native-porting guide
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 06.3 to break down)
+
 ### Phase 7: SDK Public API
 
 **Goal**: The `immersive-rt` npm package exposes a clean imperative + event-driven API with TypeScript types, a developer latency overlay, drift-honest naming, and a raw orientation opt-in — ready for a third-party developer to integrate without reading source code
