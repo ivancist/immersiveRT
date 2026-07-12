@@ -97,6 +97,17 @@ final class PeerConnectionManager: NSObject {
         peers[peerId]?.dc
     }
 
+    /// All currently OPEN "sensor" data channels — added in Plan 07 so
+    /// `TransportManager`'s sensor encode/send loop can fan a single encoded
+    /// packet out to every connected desktop peer without needing to track
+    /// peer IDs itself (mirrors `phone.ts`'s implicit
+    /// `peerConnections.forEach` broadcast inside its sensor pipeline).
+    /// `peers` stays `private` — this is a read-only projection, not a
+    /// roster leak.
+    var openDataChannels: [RTCDataChannel] {
+        peers.values.compactMap { $0.channelOpen ? $0.dc : nil }
+    }
+
     // MARK: - Fan-out
 
     /// Opens one peer connection + one "sensor" data channel for `peerId`.
