@@ -47,6 +47,18 @@ final class WebTransportSignaling: SignalingTransport {
     private var connectStream: QUIC.Stream<QUICStream>?
     private var webTransportSessionID: UInt64?
 
+    /// Held for the connection's entire lifetime — RFC 9114 §6.2.1 requires
+    /// the HTTP/3 control stream to remain open until the connection ends;
+    /// closing it at any point is a connection error the spec names
+    /// `H3_CLOSED_CRITICAL_STREAM`. Previously `openControlStream(_:)` only
+    /// held this in a local variable, so ARC released (and the underlying
+    /// `Network.framework` stream tore down) the instant that function
+    /// returned — the server then correctly observed the control stream
+    /// close and aborted with `ClosedCriticalStreamError`. Found during
+    /// 06.2-09 on-device verification (server-side error was 100%
+    /// reproducible across every WT attempt).
+    private var controlStream: QUIC.Stream<QUICStream>?
+
     /// QPACK static-table index 25 — `:status: 200` — encoded as an Indexed
     /// Field Line (RFC 9204 §4.5.2): `0xC0 | 25 = 0xD9`. Used as a
     /// best-effort success heuristic for the extended-CONNECT response; see
@@ -85,6 +97,7 @@ final class WebTransportSignaling: SignalingTransport {
         } catch {
             connection = nil
             connectStream = nil
+            controlStream = nil
             throw WebTransportSignalingError.wtNet(error)
         }
     }
@@ -102,6 +115,7 @@ final class WebTransportSignaling: SignalingTransport {
 
     func close() {
         connectStream = nil
+        controlStream = nil
         connection = nil
         // `NetworkConnection`'s declarative API (iOS 26+) exposes no
         // explicit `cancel()`/`close()` in this SDK snapshot — unlike the
@@ -144,10 +158,13 @@ final class WebTransportSignaling: SignalingTransport {
     /// `encodeVarint` primitive rather than a dedicated Http3Framing
     /// helper.
     private func openControlStream(_ conn: NetworkConnection<QUIC>) async throws {
-        let controlStream = try await conn.openStream(directionality: .unidirectional)
+        let stream = try await conn.openStream(directionality: .unidirectional)
         var payload = Http3Framing.encodeVarint(0x00) // HTTP/3 control stream type (RFC 9114 §6.2.1)
         payload.append(contentsOf: Http3Framing.settingsFrame())
-        try await controlStream.send(Data(payload), endOfStream: false)
+        try await stream.send(Data(payload), endOfStream: false)
+        // Retain on `self` — see `controlStream`'s doc comment. Must survive
+        // this function returning; a local `let` does not.
+        controlStream = stream
     }
 
     /// Opens the bidirectional "CONNECT stream" and sends the extended-CONNECT
