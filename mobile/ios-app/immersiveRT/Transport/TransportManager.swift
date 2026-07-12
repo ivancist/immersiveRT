@@ -3,9 +3,8 @@ import WebRTC
 
 /// The orchestrator that ties transports, pairing, WebRTC fan-out, heartbeat,
 /// and the sensor send loop together — a direct Swift port of
-/// `client/src/phone.ts`'s `startPhoneClient()` (connect → pair → fan-out).
-/// Task 2 (06.2-07) ports `attemptReconnect()` (phone.ts's reconnect loop)
-/// into the placeholder stubbed below.
+/// `client/src/phone.ts`'s `startPhoneClient()` (connect → pair → fan-out,
+/// Task 1) and `attemptReconnect()` (the reconnect loop, Task 2).
 ///
 /// D-04 is enforced here: WebTransport is attempted first every time,
 /// WebSocket is the fallback — never a WS-only happy path. Because this
@@ -34,6 +33,8 @@ final class TransportManager {
         case idle
         case connecting
         case paired
+        case reconnecting
+        case ended
         case error(String)
     }
 
@@ -85,6 +86,14 @@ final class TransportManager {
     /// 10s timeout on the WebSocket-fallback initial connect (phone.ts:412-429).
     private let wsConnectTimeout: TimeInterval
 
+    // MARK: - Reconnect shape (attemptReconnect(), phone.ts:507-631 — injectable for tests)
+
+    private let reconnectInitialDelay: TimeInterval
+    private let reconnectBetweenDelay: TimeInterval
+    private let maxReconnectAttempts: Int
+    private let wtReconnectTimeout: TimeInterval
+    private let wsReconnectTimeout: TimeInterval
+
     // MARK: - Sensor encode/send loop state (D-09: orientation only)
 
     private var sensorLoopStarted = false
@@ -107,7 +116,12 @@ final class TransportManager {
         heartbeatScheduler: HeartbeatScheduler = TimerHeartbeatScheduler(),
         heartbeatInterval: TimeInterval = 5.0,
         clock: TransportManagerClock = SystemTransportManagerClock(),
-        wsConnectTimeout: TimeInterval = 10.0
+        wsConnectTimeout: TimeInterval = 10.0,
+        reconnectInitialDelay: TimeInterval = 3.0,
+        reconnectBetweenDelay: TimeInterval = 10.0,
+        maxReconnectAttempts: Int = 13,
+        wtReconnectTimeout: TimeInterval = 5.0,
+        wsReconnectTimeout: TimeInterval = 10.0
     ) {
         self.myId = myId
         self.makeWebTransport = makeWebTransport
@@ -115,6 +129,11 @@ final class TransportManager {
         self.motionSource = motionSource
         self.clock = clock
         self.wsConnectTimeout = wsConnectTimeout
+        self.reconnectInitialDelay = reconnectInitialDelay
+        self.reconnectBetweenDelay = reconnectBetweenDelay
+        self.maxReconnectAttempts = maxReconnectAttempts
+        self.wtReconnectTimeout = wtReconnectTimeout
+        self.wsReconnectTimeout = wsReconnectTimeout
 
         // Local (non-`self`) captures only, so these closures are safe to
         // build before Swift's two-phase class init completes.
@@ -303,13 +322,167 @@ final class TransportManager {
         }
     }
 
-    /// Placeholder for Task 2's full port of `attemptReconnect()`
-    /// (phone.ts:507-631). Task 1 only wires the call site
-    /// (`handleTransportClosed`, above) so the transport-closed path is
-    /// complete end-to-end once Task 2 replaces this body with the retry
-    /// loop (3s initial delay, up to 13 attempts, WT-first each iteration,
-    /// slot_not_held/ws-closed/wt-net retryable classification).
-    func attemptReconnect() async {}
+    /// Direct port of `attemptReconnect()`: no `reconnectToken` ⇒ ended;
+    /// otherwise a 3s initial delay, then up to `maxReconnectAttempts`
+    /// attempts (default 13) with `reconnectBetweenDelay` (default 10s)
+    /// between them. Each iteration tries WT first; `slot_not_held` skips
+    /// the WS sub-attempt for that iteration (both transports would return
+    /// the same result); only `slot_not_held`/`ws-closed`/`wt-net` are
+    /// retryable — any other reason (or exhausting all attempts) is terminal.
+    func attemptReconnect() async {
+        guard let token = reconnectToken else {
+            state = .ended
+            return
+        }
+
+        isReconnecting = true
+        state = .reconnecting
+        await clock.sleep(reconnectInitialDelay)
+
+        for attempt in 1...maxReconnectAttempts {
+            let isLastAttempt = attempt == maxReconnectAttempts
+
+            switch await tryWtReconnect(token: token) {
+            case .joined(let transport, let response):
+                completeReconnect(with: transport, response: response)
+                return
+            case .failed(let reason):
+                if reason == "slot_not_held" {
+                    if isLastAttempt { finishReconnectFailure(); return }
+                    await clock.sleep(reconnectBetweenDelay)
+                    continue
+                }
+                // Any other WT failure falls through to the WS sub-attempt.
+            }
+
+            switch await tryWsReconnect(token: token) {
+            case .joined(let transport, let response):
+                completeReconnect(with: transport, response: response)
+                return
+            case .failed(let reason):
+                let retryable = reason == "slot_not_held" || reason == "ws-closed" || reason == "wt-net"
+                if retryable, !isLastAttempt {
+                    await clock.sleep(reconnectBetweenDelay)
+                    continue
+                }
+                finishReconnectFailure()
+                return
+            }
+        }
+
+        finishReconnectFailure()
+    }
+
+    private enum ReconnectAttemptResult {
+        case joined(SignalingTransport, SignalingEnvelope)
+        case failed(reason: String)
+    }
+
+    /// Try 1 (per iteration): fresh WebTransport, 5s connect timeout,
+    /// commit only on `join-ack` — mirrors `tryWtReconnect()`
+    /// (phone.ts:334-368). WebTransport returns `join-error` as an ordinary
+    /// envelope (not a thrown error), so its `reason` payload field is read
+    /// directly.
+    private func tryWtReconnect(token: String) async -> ReconnectAttemptResult {
+        let candidate = makeWebTransport(host, myId)
+        do {
+            try await withTransportTimeout(wtReconnectTimeout, clock: clock) {
+                try await candidate.connect()
+            }
+            let response = try await candidate.request(reconnectEnvelope(token: token))
+            if response.type == SignalingEnvelope.SignalingType.joinAck {
+                return .joined(candidate, response)
+            }
+            candidate.close()
+            let reason = (response.payload["reason"]?.value as? String) ?? ""
+            return .failed(reason: reason)
+        } catch {
+            candidate.close()
+            return .failed(reason: "wt-net")
+        }
+    }
+
+    /// Try 2 (per iteration, only if WT didn't join): fresh WebSocket, 10s
+    /// connect timeout — mirrors the WS sub-path inside `attemptReconnect()`
+    /// (phone.ts:548-581). Unlike WebTransport, `WebSocketSignaling.request(_:)`
+    /// rejects a pending `reconnect` continuation by THROWING
+    /// `WebSocketSignalingError.requestFailed(reason:)` on a structured
+    /// `join-error` response — that thrown reason must be unwrapped here
+    /// rather than collapsed into the always-retryable "ws-closed" bucket,
+    /// or a genuine terminal join-error would incorrectly retry to the
+    /// ceiling. A connect()-level failure (network/timeout) has no
+    /// server-provided reason and is legitimately "ws-closed".
+    private func tryWsReconnect(token: String) async -> ReconnectAttemptResult {
+        let candidate = makeWebSocket(host, myId)
+        do {
+            try await withTransportTimeout(wsReconnectTimeout, clock: clock) {
+                try await candidate.connect()
+            }
+        } catch {
+            candidate.close()
+            return .failed(reason: "ws-closed")
+        }
+
+        do {
+            let response = try await candidate.request(reconnectEnvelope(token: token))
+            if response.type == SignalingEnvelope.SignalingType.joinAck {
+                return .joined(candidate, response)
+            }
+            candidate.close()
+            let reason = (response.payload["reason"]?.value as? String) ?? ""
+            return .failed(reason: reason)
+        } catch let error as WebSocketSignalingError {
+            candidate.close()
+            switch error {
+            case .requestFailed(let reason):
+                return .failed(reason: reason)
+            case .unsupportedRequestType:
+                return .failed(reason: "ws-closed")
+            }
+        } catch {
+            candidate.close()
+            return .failed(reason: "ws-closed")
+        }
+    }
+
+    private func reconnectEnvelope(token: String) -> SignalingEnvelope {
+        SignalingEnvelope(
+            type: SignalingEnvelope.SignalingType.reconnect,
+            from: myId,
+            to: "",
+            payload: ["reconnect_token": AnyCodable(token)]
+        )
+    }
+
+    /// On `join-ack` (from either transport): update token/ice servers,
+    /// mark registered, restart heartbeat (idempotent), and reopen any
+    /// peer whose data channel is closed/closing or whose pc is `failed`
+    /// (phone.ts:584-607) — delegated to `PeerConnectionManager`'s own
+    /// collect-then-reopen `reopenStaleChannels()`.
+    private func completeReconnect(with transport: SignalingTransport, response: SignalingEnvelope) {
+        activate(transport)
+        if let newToken = response.reconnectToken { reconnectToken = newToken }
+        if let ice = response.iceServers { peerFanOut.iceServers = ICEConfig.iceServers(from: ice) }
+
+        registered = true
+        peerFanOut.registered = true
+        isReconnecting = false
+        state = .paired
+
+        peerFanOut.reopenStaleChannels()
+        heartbeatTimer.start()
+    }
+
+    /// Terminal path: only `slot_not_held`/`ws-closed`/`wt-net` are
+    /// retryable; anything else, or exhausting all attempts, clears the
+    /// token, stops the heartbeat, and transitions to `.ended`
+    /// (phone.ts:618-631).
+    private func finishReconnectFailure() {
+        isReconnecting = false
+        reconnectToken = nil
+        heartbeatTimer.stop()
+        state = .ended
+    }
 
     // MARK: - Sensor encode/send loop (D-09: orientation only, position/gesture/drift stay zero)
 
@@ -412,6 +585,12 @@ protocol PeerFanOut: AnyObject {
 
     func openChannel(toPeer peerId: String, isRecovery: Bool)
     func closePeer(_ peerId: String)
+    /// Reopens any peer whose data channel is closed/closing or whose peer
+    /// connection state is `failed` — the collect-then-reopen pattern from
+    /// `attemptReconnect()` (phone.ts:594-604). Added in Task 2 for the
+    /// reconnect loop's post-`join-ack` self-heal; already implemented on
+    /// `PeerConnectionManager` since Plan 06.
+    func reopenStaleChannels()
     func applyRemoteAnswer(_ envelope: SignalingEnvelope, for peerId: String)
     func addRemoteCandidate(_ envelope: SignalingEnvelope, for peerId: String)
 }

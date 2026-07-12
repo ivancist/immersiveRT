@@ -126,13 +126,25 @@ private final class SpyPeerFanOut: PeerFanOut {
     func addRemoteCandidate(_ envelope: SignalingEnvelope, for peerId: String) {}
 }
 
-/// A `TransportManagerClock` that returns immediately — the "fast/virtual
-/// clock" the plan requires so reconnect-loop tests never wait on real
-/// 3s/10s delays.
+/// A `TransportManagerClock` that never waits anywhere near the real
+/// 3s/10s production delays — the "fast/virtual clock" the plan requires.
+///
+/// Sleeps a nominal 5ms instead of returning with zero suspension: `sleep`
+/// backs BOTH `attemptReconnect`'s own inter-attempt delays AND
+/// `withTransportTimeout`'s internal `withThrowingTaskGroup` race between
+/// the operation and the timeout arm. A truly zero-length sleep makes that
+/// race genuinely nondeterministic at the Swift concurrency scheduler level
+/// against `ScriptedSignalingTransport`'s equally-near-instant
+/// connect()/request() — occasionally the timeout arm "wins" even though
+/// the operation would have succeeded, flaking tests like
+/// `test_start_wtFails_wsSucceeds_activeTransportIsWS`. 5ms is negligible
+/// test wall-clock time (even ×13 retry-ceiling iterations) while reliably
+/// losing the race to any non-timing-out fake operation.
 private final class InstantClock: TransportManagerClock {
     private(set) var sleepCalls: [TimeInterval] = []
     func sleep(_ seconds: TimeInterval) async {
         sleepCalls.append(seconds)
+        try? await Task.sleep(nanoseconds: 5_000_000)
     }
 }
 
