@@ -1,21 +1,18 @@
 import Foundation
 import Network
 
-/// WebTransport-over-HTTP/3 signaling transport — the D-05 time-boxed spike.
-///
-/// TIME-BOX (D-05): this class gets exactly ONE implementation cycle (this
-/// plan, 06.2-05) plus ONE on-device debug session (06.2-09's WebTransport
-/// checkpoint). Success there = open a QUIC/h3 connection, complete the
-/// extended-CONNECT handshake, open a bidirectional stream, and round-trip
-/// (or at minimum successfully send) a `register` envelope against the
-/// running dev server. If that is not demonstrated within that on-device
-/// session, WebSocket-only (`WebSocketSignaling`, Plan 04) becomes the
-/// working transport path for Phase 06.2 and this spike's findings are
-/// documented for a future revisit — per D-04/D-05 that must be the OUTCOME
-/// of this documented spike, never a shortcut taken upfront. Because
-/// `TransportManager` (Plan 07) already tries WT first then falls back to
-/// WS at runtime, a failed spike requires NO code restructure: `connect()`
-/// simply throws a `wt-net`-reason error and the manager degrades safely.
+/// WebTransport-over-HTTP/3 signaling transport — originated as the D-05
+/// time-boxed spike, now a working transport confirmed end-to-end on-device
+/// (06.2-09): connect, extended-CONNECT, register, pair, WebRTC
+/// offer/answer/ICE relay, and heartbeat all round-trip successfully over
+/// native QUIC/h3, with no WebSocket fallback needed. Three bugs found and
+/// fixed during that session (control stream not retained past connect,
+/// ack/error envelopes missing from/to failing to decode, and the
+/// extended-CONNECT success check only recognizing one of two valid QPACK
+/// encodings of `:status: 200`) — see the fix commits and
+/// `06.2-SPIKE-FINDINGS.md` for detail. `TransportManager` (Plan 07) still
+/// tries WT first and falls back to WS on any failure, so this remains a
+/// safe degrade path, not a hard dependency.
 ///
 /// This is genuinely greenfield low-level protocol work (PATTERNS.md
 /// "No Analog Found" — no first-party or mature third-party native Swift
@@ -83,25 +80,18 @@ final class WebTransportSignaling: SignalingTransport {
         connection = conn
 
         do {
-            print("[WT-DEBUG] waitUntilReady starting")
             try await waitUntilReady(conn)
-            print("[WT-DEBUG] connection ready, opening control stream")
             try await openControlStream(conn)
-            print("[WT-DEBUG] control stream opened, performing extended-CONNECT")
             try await performExtendedConnect(conn)
-            print("[WT-DEBUG] extended-CONNECT succeeded, sessionID=\(webTransportSessionID.map(String.init) ?? "nil")")
 
             // Mirrors phone.ts's startPhoneClient(): the push listener is
             // started BEFORE the register send so no early server push is
             // dropped while the register round trip is still in flight.
             startInboundStreamListener(conn)
-            print("[WT-DEBUG] sending register envelope")
             _ = try await sendAndDrain(
                 SignalingEnvelope(type: SignalingEnvelope.SignalingType.register, from: myId, to: "", payload: [:])
             )
-            print("[WT-DEBUG] register round trip succeeded")
         } catch {
-            print("[WT-DEBUG] connect() failed: \(error)")
             connection = nil
             connectStream = nil
             controlStream = nil
@@ -195,8 +185,6 @@ final class WebTransportSignaling: SignalingTransport {
         try await stream.send(Data(frame), endOfStream: false)
 
         let response = try await stream.receive(atLeast: 1, atMost: 4096)
-        let hex = response.content.map { String(format: "%02x", $0) }.joined(separator: " ")
-        print("[WT-DEBUG] extended-CONNECT response (\(response.content.count) bytes, endOfStream=\(response.metadata.endOfStream)): \(hex)")
 
         // Strip the HTTP/3 HEADERS frame's type+length varint prefix
         // (RFC 9114 §7.2.2) before handing the payload to the QPACK
@@ -207,19 +195,16 @@ final class WebTransportSignaling: SignalingTransport {
               let (frameLen, lenLen) = Http3Framing.decodeVarint(Array(responseBytes[typeLen...])),
               responseBytes.count >= typeLen + lenLen + Int(frameLen)
         else {
-            print("[WT-DEBUG] response is not a well-formed HEADERS frame")
             throw WebTransportSignalingError.wtNet(nil)
         }
         let headerPayload = Array(responseBytes[(typeLen + lenLen)...])
 
         guard Self.responseIndicatesStatus200(headerPayload) else {
-            print("[WT-DEBUG] response did not decode to :status: 200")
             throw WebTransportSignalingError.wtNet(nil)
         }
 
         connectStream = stream
         webTransportSessionID = stream.streamID
-        print("[WT-DEBUG] performExtendedConnect: streamID=\(stream.streamID)")
     }
 
     /// Determines whether an extended-CONNECT response's HTTP/3 HEADERS
@@ -353,12 +338,10 @@ final class WebTransportSignaling: SignalingTransport {
             throw WebTransportSignalingError.wtNet(nil)
         }
         let stream = try await conn.openStream(directionality: .bidirectional)
-        print("[WT-DEBUG] sendAndDrain: opened stream \(stream.streamID) for type=\(envelope.type)")
         var payload = Http3Framing.wtStreamTypePrefix(bidi: true)
         payload.append(contentsOf: Http3Framing.encodeVarint(sessionID))
         payload.append(contentsOf: try JSONEncoder().encode(envelope))
         try await stream.send(Data(payload), endOfStream: true)
-        print("[WT-DEBUG] sendAndDrain: sent \(payload.count) bytes on stream \(stream.streamID)")
 
         var buffer = Data()
         while true {
