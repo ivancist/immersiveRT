@@ -1,0 +1,68 @@
+[
+  {
+    "name": "identity-orientation",
+    "input": {
+      "seq": 1,
+      "timestamp": 1000,
+      "qw": 1,
+      "qx": 0,
+      "qy": 0,
+      "qz": 0,
+      "dx": 0,
+      "dy": 0,
+      "dz": 0,
+      "px": 0,
+      "py": 0,
+      "pz": 0,
+      "driftConfidence": 0,
+      "touchActive": false,
+      "touchX": 0,
+      "touchY": 0
+    },
+    "bytesHex": "010100e8030000003c000000000000000000000000000000000000000000000000000000"
+  },
+  {
+    "name": "non-trivial-orientation",
+    "input": {
+      "seq": 65535,
+      "timestamp": 4000000,
+      "qw": 0.7071067811865476,
+      "qx": 0,
+      "qy": 0.7071067811865476,
+      "qz": 0,
+      "dx": 0,
+      "dy": 0,
+      "dz": 0,
+      "px": 0,
+      "py": 0,
+      "pz": 0,
+      "driftConfidence": 0,
+      "touchActive": true,
+      "touchX": 0.25,
+      "touchY": 0.75
+    },
+    "bytesHex": "01ffff00093d00a8390000a839000000000000000000000000000000000000010040ffbf"
+  },
+  {
+    "name": "edge-clamp-and-nan",
+    "input": {
+      "seq": 100,
+      "timestamp": 2000,
+      "qw": 1,
+      "qx": null,
+      "qy": 0,
+      "qz": 0,
+      "dx": 0,
+      "dy": 0,
+      "dz": 0,
+      "px": 0,
+      "py": 0,
+      "pz": 0,
+      "driftConfidence": 0,
+      "touchActive": true,
+      "touchX": 1.5,
+      "touchY": 0.5
+    },
+    "bytesHex": "016400d0070000003c0000000000000000000000000000000000000000000001ffff0080"
+  }
+]
