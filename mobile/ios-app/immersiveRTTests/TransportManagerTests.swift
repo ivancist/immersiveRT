@@ -108,6 +108,7 @@ private final class SpyPeerFanOut: PeerFanOut {
 
     private(set) var openedPeers: [(peerId: String, isRecovery: Bool)] = []
     private(set) var closedPeers: [String] = []
+    private(set) var reopenStaleChannelsCallCount = 0
 
     func openChannel(toPeer peerId: String, isRecovery: Bool) {
         openedPeers.append((peerId, isRecovery))
@@ -115,6 +116,10 @@ private final class SpyPeerFanOut: PeerFanOut {
 
     func closePeer(_ peerId: String) {
         closedPeers.append(peerId)
+    }
+
+    func reopenStaleChannels() {
+        reopenStaleChannelsCallCount += 1
     }
 
     func applyRemoteAnswer(_ envelope: SignalingEnvelope, for peerId: String) {}
@@ -158,6 +163,17 @@ private func failureEnvelope(type: String, reason: String) -> SignalingEnvelope 
     SignalingEnvelope(type: type, from: "", to: "", payload: ["reason": AnyCodable(reason)])
 }
 
+private func joinAckEnvelope(reconnectToken: String = "rtok-2") -> SignalingEnvelope {
+    SignalingEnvelope(
+        type: SignalingEnvelope.SignalingType.joinAck,
+        from: "", to: "",
+        payload: [
+            "reconnect_token": AnyCodable(reconnectToken),
+            "ice_servers": AnyCodable([[String: Any]]()),
+        ]
+    )
+}
+
 // MARK: - TransportManagerTests
 
 /// Exercises `TransportManager`'s control flow with fake `SignalingTransport`
@@ -169,15 +185,34 @@ final class TransportManagerTests: XCTestCase {
         myId: String = "phone-fixed-id",
         spy: TransportFactorySpy,
         fanOut: SpyPeerFanOut = SpyPeerFanOut(),
-        clock: TransportManagerClock = InstantClock()
+        heartbeatScheduler: HeartbeatScheduler = FakeHeartbeatScheduler(),
+        clock: TransportManagerClock = InstantClock(),
+        maxReconnectAttempts: Int = 13
     ) -> TransportManager {
         TransportManager(
             myId: myId,
             makeWebTransport: { host, id in spy.webTransport(host: host, myId: id) },
             makeWebSocket: { host, id in spy.webSocket(host: host, myId: id) },
             makePeerFanOut: { _, _ in fanOut },
-            clock: clock
+            heartbeatScheduler: heartbeatScheduler,
+            clock: clock,
+            reconnectInitialDelay: 0,
+            reconnectBetweenDelay: 0,
+            maxReconnectAttempts: maxReconnectAttempts
         )
+    }
+
+    /// Polls `condition` until it's `true` or `timeout` elapses — used only
+    /// for the one test that exercises the fire-and-forget
+    /// `handleTransportClosed` → `Task { attemptReconnect() }` wiring,
+    /// where there is no `await`-able handle from the production API.
+    /// Every other reconnect test calls `attemptReconnect()` directly
+    /// (it is not `private`), so it needs no polling.
+    private func waitUntil(timeout: TimeInterval = 2.0, _ condition: @escaping () -> Bool) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
     }
 
     // MARK: - Task 1: WT-first / WS-fallback connect ordering (D-04)
@@ -366,5 +401,176 @@ final class TransportManagerTests: XCTestCase {
                 "handleOrientation must never set \(field) — D-09 requires these stay zero via SensorPacket's defaults"
             )
         }
+    }
+
+    // MARK: - Task 2: attemptReconnect() guard + retry shape (attemptReconnect(), phone.ts:507-631)
+
+    func test_attemptReconnect_noReconnectToken_endsImmediately() async {
+        let spy = TransportFactorySpy()
+        let manager = makeManager(spy: spy)
+        // Never paired — reconnectToken stays nil.
+
+        await manager.attemptReconnect()
+
+        XCTAssertEqual(manager.state, .ended)
+        XCTAssertEqual(spy.webTransportCalls.count, 0)
+        XCTAssertEqual(spy.webSocketCalls.count, 0)
+    }
+
+    func test_attemptReconnect_retryCeilingIs13Attempts() async {
+        let spy = TransportFactorySpy()
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.requestHandler = { _ in pairAckEnvelope() }; return t }
+        let manager = makeManager(spy: spy)
+        await manager.start(token: "tok", host: "example.com")
+        XCTAssertEqual(manager.state, .paired)
+        spy.resetCallCounts()
+
+        // Always network-fail on both transports (retryable "wt-net"/"ws-closed").
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.connectError = TestError.generic; return t }
+        spy.makeWS = { let t = ScriptedSignalingTransport(isWebTransport: false); t.connectError = TestError.generic; return t }
+
+        await manager.attemptReconnect()
+
+        XCTAssertEqual(spy.webTransportCalls.count, 13, "WT tried every iteration, up to the 13-attempt ceiling")
+        XCTAssertEqual(spy.webSocketCalls.count, 13, "WS is the sub-attempt fallback in each of the 13 iterations")
+        XCTAssertEqual(manager.state, .ended)
+        XCTAssertNil(manager.reconnectToken)
+    }
+
+    func test_attemptReconnect_triesWTBeforeWS_everyIteration() async {
+        let spy = TransportFactorySpy()
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.requestHandler = { _ in pairAckEnvelope() }; return t }
+        let manager = makeManager(spy: spy, maxReconnectAttempts: 3)
+        await manager.start(token: "tok", host: "example.com")
+        spy.resetCallCounts()
+
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.connectError = TestError.generic; return t }
+        spy.makeWS = { let t = ScriptedSignalingTransport(isWebTransport: false); t.connectError = TestError.generic; return t }
+
+        await manager.attemptReconnect()
+
+        XCTAssertEqual(spy.callOrder.count, 6)
+        for pairStart in stride(from: 0, to: 6, by: 2) {
+            XCTAssertEqual(spy.callOrder[pairStart], "wt", "iteration \(pairStart / 2 + 1): WT must be tried first")
+            XCTAssertEqual(spy.callOrder[pairStart + 1], "ws", "iteration \(pairStart / 2 + 1): WS follows WT")
+        }
+    }
+
+    func test_attemptReconnect_slotNotHeld_skipsWSSubAttempt() async {
+        let spy = TransportFactorySpy()
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.requestHandler = { _ in pairAckEnvelope() }; return t }
+        let manager = makeManager(spy: spy, maxReconnectAttempts: 3)
+        await manager.start(token: "tok", host: "example.com")
+        spy.resetCallCounts()
+
+        spy.makeWT = {
+            let t = ScriptedSignalingTransport(isWebTransport: true)
+            t.requestHandler = { _ in failureEnvelope(type: SignalingEnvelope.SignalingType.joinError, reason: "slot_not_held") }
+            return t
+        }
+        spy.makeWS = { let t = ScriptedSignalingTransport(isWebTransport: false); t.connectError = TestError.generic; return t }
+
+        await manager.attemptReconnect()
+
+        XCTAssertEqual(spy.webTransportCalls.count, 3, "WT retried on slot_not_held up to the ceiling")
+        XCTAssertEqual(spy.webSocketCalls.count, 0, "slot_not_held must skip the WS sub-attempt entirely — both transports would return the same result")
+        XCTAssertEqual(manager.state, .ended)
+    }
+
+    func test_attemptReconnect_nonRetryableReason_isTerminalOnFirstIteration() async {
+        let spy = TransportFactorySpy()
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.requestHandler = { _ in pairAckEnvelope() }; return t }
+        let manager = makeManager(spy: spy, maxReconnectAttempts: 13)
+        await manager.start(token: "tok", host: "example.com")
+        spy.resetCallCounts()
+
+        // WT fails with a network error ("wt-net") → falls through to WS,
+        // which returns a genuine, non-retryable join-error reason.
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.connectError = TestError.generic; return t }
+        spy.makeWS = {
+            let t = ScriptedSignalingTransport(isWebTransport: false)
+            t.requestHandler = { _ in failureEnvelope(type: SignalingEnvelope.SignalingType.joinError, reason: "banned") }
+            return t
+        }
+
+        await manager.attemptReconnect()
+
+        XCTAssertEqual(spy.webTransportCalls.count, 1, "a non-retryable reason must stop the loop on the very first iteration")
+        XCTAssertEqual(spy.webSocketCalls.count, 1)
+        XCTAssertEqual(manager.state, .ended)
+        XCTAssertNil(manager.reconnectToken)
+    }
+
+    /// Regression: `WebSocketSignaling.request(_:)` rejects a pending
+    /// `reconnect` continuation by THROWING
+    /// `WebSocketSignalingError.requestFailed(reason:)` on a structured
+    /// `join-error` response (unlike WebTransport, which returns
+    /// `join-error` as a normal envelope) — the WS reconnect sub-attempt
+    /// must unwrap that thrown error's `reason` rather than collapsing
+    /// every WS failure into the always-retryable "ws-closed" bucket, or a
+    /// genuine terminal join-error would incorrectly retry to the ceiling.
+    func test_attemptReconnect_wsJoinError_preservesReason_notCollapsedToWsClosed() async {
+        let spy = TransportFactorySpy()
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.requestHandler = { _ in pairAckEnvelope() }; return t }
+        let manager = makeManager(spy: spy, maxReconnectAttempts: 13)
+        await manager.start(token: "tok", host: "example.com")
+        spy.resetCallCounts()
+
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.connectError = TestError.generic; return t }
+        spy.makeWS = {
+            let t = ScriptedSignalingTransport(isWebTransport: false)
+            t.requestHandler = { _ in throw WebSocketSignalingError.requestFailed(reason: "banned") }
+            return t
+        }
+
+        await manager.attemptReconnect()
+
+        XCTAssertEqual(spy.webTransportCalls.count, 1, "a genuine non-retryable join-error reason must terminate on the first iteration, not retry to the 13-attempt ceiling")
+        XCTAssertEqual(manager.state, .ended)
+    }
+
+    func test_attemptReconnect_joinAck_updatesTokenRestartsHeartbeatAndReopensStalePeers() async {
+        let spy = TransportFactorySpy()
+        let fanOut = SpyPeerFanOut()
+        let scheduler = FakeHeartbeatScheduler()
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.requestHandler = { _ in pairAckEnvelope() }; return t }
+        let manager = makeManager(spy: spy, fanOut: fanOut, heartbeatScheduler: scheduler)
+        await manager.start(token: "tok", host: "example.com")
+        let heartbeatTokenCountAfterPair = scheduler.tokens.count
+        spy.resetCallCounts()
+
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.requestHandler = { _ in joinAckEnvelope(reconnectToken: "new-token") }; return t }
+
+        await manager.attemptReconnect()
+
+        XCTAssertEqual(manager.state, .paired)
+        XCTAssertEqual(manager.reconnectToken, "new-token")
+        XCTAssertEqual(fanOut.reopenStaleChannelsCallCount, 1, "successful reconnect must reopen stale peer channels")
+        XCTAssertGreaterThan(scheduler.tokens.count, heartbeatTokenCountAfterPair, "heartbeat must be restarted on successful reconnect")
+    }
+
+    func test_transportOnClosed_triggersReconnectLoop() async {
+        let spy = TransportFactorySpy()
+        var wtFake: ScriptedSignalingTransport?
+        spy.makeWT = {
+            let t = ScriptedSignalingTransport(isWebTransport: true)
+            t.requestHandler = { _ in pairAckEnvelope() }
+            wtFake = t
+            return t
+        }
+        let manager = makeManager(spy: spy)
+        await manager.start(token: "tok", host: "example.com")
+        XCTAssertEqual(manager.state, .paired)
+
+        // Every fresh reconnect attempt (via `spy.makeWT`) also pair-acks
+        // rather than join-acks, so the loop fails fast (reason "") and
+        // reaches `.ended` — this test only proves `onClosed` actually
+        // kicks off the reconnect loop end-to-end, not the retry shape
+        // itself (covered by the dedicated tests above).
+        wtFake?.onClosed?("wt-net")
+
+        await waitUntil { manager.state == .ended }
+
+        XCTAssertEqual(manager.state, .ended)
     }
 }
