@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import UIKit
 
 /// SwiftUI-observable wrapper around `TransportManager` — the connective
 /// tissue between the imperative connect/pair/fan-out orchestrator (Plan 07)
@@ -62,6 +63,7 @@ final class SessionViewModel: ObservableObject {
     /// `ConnectionState` + channel counts, translates it into the matching
     /// `SessionState.Event`, and folds it through `reduce(state:event:)`.
     private func pollTransportState() {
+        let wasStreaming = isStreaming(sessionState)
         let open = transportManager.openChannelCount
         let total = transportManager.peerIds.count
 
@@ -82,11 +84,54 @@ final class SessionViewModel: ObservableObject {
             sessionState = SessionState.reduce(state: sessionState, event: .pairError(message))
             stopPolling()
         }
+
+        // Entering the active streaming state (PHONE-07) — mirrors
+        // phone.ts's requestWakeLock() call sites. Only fires on the
+        // paired/connecting -> paired/active transition, not every tick;
+        // reset-on-background is driven separately by
+        // handleScenePhaseChange(_:) below (Pitfall 4).
+        if isStreaming(sessionState), !wasStreaming {
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
     }
 
     private func stopPolling() {
         pollTimer?.invalidate()
         pollTimer = nil
+    }
+
+    /// "Streaming" mirrors `TransportManager.registered` — the CoreMotion
+    /// loop + heartbeat are already running once paired (not gated on a
+    /// data channel being open), so the Wake Lock equivalent should be too.
+    private func isStreaming(_ state: SessionState) -> Bool {
+        switch state {
+        case .paired, .active: return true
+        case .connecting, .reconnecting, .error, .ended: return false
+        }
+    }
+
+    // MARK: - Wake Lock equivalent + scenePhase lifecycle (Task 3, PHONE-07, Pitfall 4)
+
+    /// Explicitly resets `isIdleTimerDisabled` on backgrounding — unlike the
+    /// web Wake Lock API's auto-release, iOS persists the flag until reset
+    /// (Pitfall 4) — and stops/resumes CoreMotion + the heartbeat via
+    /// `TransportManager` to avoid draining battery while backgrounded,
+    /// mirroring the intent of `phone.ts`'s `visibilitychange` handler
+    /// (lines 1214-1231) even though the underlying API shape differs.
+    /// Driven by `immersiveRTApp`'s `.onChange(of: scenePhase)`.
+    func handleScenePhaseChange(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            if isStreaming(sessionState) {
+                UIApplication.shared.isIdleTimerDisabled = true
+            }
+            transportManager.resumeFromBackground()
+        case .inactive, .background:
+            UIApplication.shared.isIdleTimerDisabled = false
+            transportManager.pauseForBackground()
+        @unknown default:
+            break
+        }
     }
 
     deinit {

@@ -538,6 +538,35 @@ final class TransportManager {
             channel.sendData(buffer)
         }
     }
+
+    // MARK: - Background lifecycle (Plan 08 Task 3, PHONE-07, Pitfall 4)
+
+    /// Stops the CoreMotion sensor loop and heartbeat while the app is
+    /// backgrounded — the battery-conservation companion to
+    /// `SessionViewModel.handleScenePhaseChange(_:)` resetting
+    /// `isIdleTimerDisabled` to `false` (Pitfall 4: unlike the web Wake
+    /// Lock API's auto-release, iOS's idle timer persists until explicitly
+    /// reset, so the sensor loop must be explicitly paused too rather than
+    /// relying on any implicit suspension). Does not tear down WebRTC peer
+    /// connections or clear `registered` — those still track transport-
+    /// level closes separately; `resumeFromBackground()` re-arms both.
+    func pauseForBackground() {
+        motionSource.stop()
+        heartbeatTimer.stop()
+    }
+
+    /// Resumes CoreMotion + the heartbeat after returning to the
+    /// foreground, mirroring `visibilitychange` → visible re-arming
+    /// `requestWakeLock()` and an immediate heartbeat send (phone.ts lines
+    /// 1214-1225). No-op if the session was never registered/streaming —
+    /// `startSensorLoopIfNeeded()`'s `onOrientation` closure is still wired
+    /// from the original pairing, so `motionSource.start()` alone resumes
+    /// delivery without re-registering the handler.
+    func resumeFromBackground() {
+        guard registered else { return }
+        motionSource.start()
+        heartbeatTimer.start()
+    }
 }
 
 // MARK: - ActiveTransportDispatcher (Shared Pattern: envelope dispatch)
