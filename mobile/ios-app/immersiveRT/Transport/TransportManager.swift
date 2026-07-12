@@ -59,6 +59,12 @@ final class TransportManager {
 
     private(set) var activeTransport: SignalingTransport?
 
+    /// Snapshot of currently-open WebRTC data channels — exposed read-only
+    /// so `SessionViewModel` (Plan 08) can poll it at a throttled UI rate
+    /// (Pitfall 3) without reaching into the private `peerFanOut`. Never
+    /// read from the 60Hz sensor send path itself.
+    var openChannelCount: Int { peerFanOut.openDataChannels.count }
+
     /// `true` while `attemptReconnect()` owns the connection lifecycle —
     /// mirrors `phone.ts`'s `_reconnecting` guard, which suppresses a
     /// second concurrent reconnect loop from `onClosed` firing again mid-loop.
