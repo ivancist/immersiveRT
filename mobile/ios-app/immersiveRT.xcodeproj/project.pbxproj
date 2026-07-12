@@ -28,6 +28,11 @@
 			package = A1B2C3D4E5F647A8B9C0D1E2 /* XCRemoteSwiftPackageReference "WebRTC" */;
 			productName = WebRTC;
 		};
+		C3D4E5F647893A0B1C2D3E4F /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A1B2C3D4E5F647A8B9C0D1E2 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
+		};
 /* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -133,6 +138,7 @@
 			);
 			name = immersiveRTTests;
 			packageProductDependencies = (
+				C3D4E5F647893A0B1C2D3E4F /* WebRTC */,
 			);
 			productName = immersiveRTTests;
 			productReference = 546265F3AAD141E8B2E6B8C7 /* immersiveRTTests.xctest */;
