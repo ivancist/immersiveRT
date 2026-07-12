@@ -60,10 +60,10 @@ final class WebTransportSignaling: SignalingTransport {
     private var controlStream: QUIC.Stream<QUICStream>?
 
     /// QPACK static-table index 25 — `:status: 200` — encoded as an Indexed
-    /// Field Line (RFC 9204 §4.5.2): `0xC0 | 25 = 0xD9`. Used as a
-    /// best-effort success heuristic for the extended-CONNECT response; see
-    /// `performExtendedConnect`'s doc comment for why a full QPACK response
-    /// decoder is deliberately out of scope for this spike.
+    /// Field Line (RFC 9204 §4.5.2): `0xC0 | 25 = 0xD9`. One of two response
+    /// encodings `responseIndicatesStatus200(_:)` recognizes; see that
+    /// function's doc comment for the other (the one the real server
+    /// actually uses).
     private static let qpackIndexedStatus200: UInt8 = 0xD9
 
     init(host: String, port: UInt16 = 4433, myId: String = UUID().uuidString) {
@@ -197,14 +197,147 @@ final class WebTransportSignaling: SignalingTransport {
         let response = try await stream.receive(atLeast: 1, atMost: 4096)
         let hex = response.content.map { String(format: "%02x", $0) }.joined(separator: " ")
         print("[WT-DEBUG] extended-CONNECT response (\(response.content.count) bytes, endOfStream=\(response.metadata.endOfStream)): \(hex)")
-        guard response.content.contains(Self.qpackIndexedStatus200) else {
-            print("[WT-DEBUG] response did NOT contain expected status-200 byte 0x\(String(format: "%02x", Self.qpackIndexedStatus200))")
+
+        // Strip the HTTP/3 HEADERS frame's type+length varint prefix
+        // (RFC 9114 §7.2.2) before handing the payload to the QPACK
+        // field-line walker — `response.content` is the raw stream bytes,
+        // frame header included, not just the QPACK-encoded field section.
+        let responseBytes = Array(response.content)
+        guard let (frameType, typeLen) = Http3Framing.decodeVarint(responseBytes), frameType == 0x01,
+              let (frameLen, lenLen) = Http3Framing.decodeVarint(Array(responseBytes[typeLen...])),
+              responseBytes.count >= typeLen + lenLen + Int(frameLen)
+        else {
+            print("[WT-DEBUG] response is not a well-formed HEADERS frame")
+            throw WebTransportSignalingError.wtNet(nil)
+        }
+        let headerPayload = Array(responseBytes[(typeLen + lenLen)...])
+
+        guard Self.responseIndicatesStatus200(headerPayload) else {
+            print("[WT-DEBUG] response did not decode to :status: 200")
             throw WebTransportSignalingError.wtNet(nil)
         }
 
         connectStream = stream
         webTransportSessionID = stream.streamID
         print("[WT-DEBUG] performExtendedConnect: streamID=\(stream.streamID)")
+    }
+
+    /// Determines whether an extended-CONNECT response's HTTP/3 HEADERS
+    /// frame payload carries `:status: 200`.
+    ///
+    /// On-device verification (06.2-09) against the real server showed
+    /// `wtransport`'s QPACK encoder does NOT use the fully-static Indexed
+    /// Field Line for `:status: 200` (RFC 9204 §4.5.2, static index 25,
+    /// byte `0xD9`) that this spike originally assumed. Instead it encodes
+    /// `:status` as a Literal Field Line With Name Reference (§4.5.4) to the
+    /// nearby static index 24 (`:status: 103` — only the NAME is reused) and
+    /// Huffman-compresses the literal value "200" (§4.5.4 + RFC 7541 §5.2).
+    /// Both are spec-valid encodings of the identical header; this walker
+    /// recognizes both rather than one fixed byte pattern.
+    ///
+    /// `bytes` is the raw HEADERS frame payload (Required Insert Count +
+    /// Delta Base prefix, RFC 9204 §4.5.1, followed by encoded field lines).
+    /// Only the two field-line representations observed in practice are
+    /// handled — sufficient to answer "is this a 200 response", not a
+    /// general-purpose QPACK decoder (deliberately out of scope, per this
+    /// file's original design note).
+    static func responseIndicatesStatus200(_ bytes: [UInt8]) -> Bool {
+        // Required Insert Count: 8-bit prefix integer (RFC 7541 §5.1).
+        guard let (_, ricLen) = qpackPrefixIntDecode(bytes, prefixBits: 8) else { return false }
+        // Delta Base: 7-bit prefix integer: bit 7 of the first byte is the
+        // sign (S), the low 7 bits (plus continuation) are the magnitude.
+        guard ricLen < bytes.count,
+              let (_, deltaLen) = qpackPrefixIntDecode(Array(bytes[ricLen...]), prefixBits: 7)
+        else { return false }
+
+        var offset = ricLen + deltaLen
+        while offset < bytes.count {
+            let first = bytes[offset]
+            if first & 0b1100_0000 == 0b1100_0000 {
+                // Indexed Field Line (§4.5.2): `1 T Index(6+)`, T=1 (static).
+                guard let (index, len) = qpackPrefixIntDecode(Array(bytes[offset...]), prefixBits: 6) else { return false }
+                if index == 25 { return true } // :status: 200, fully indexed
+                offset += len
+            } else if first & 0b1100_0000 == 0b0100_0000 {
+                // Literal Field Line With Name Reference (§4.5.4):
+                // `01 N T NameIndex(4+)` then `H VLen(7+)` + value bytes.
+                guard let (nameIndex, nameLen) = qpackPrefixIntDecode(Array(bytes[offset...]), prefixBits: 4) else { return false }
+                var valueOffset = offset + nameLen
+                guard valueOffset < bytes.count else { return false }
+                let huffman = bytes[valueOffset] & 0b1000_0000 != 0
+                guard let (valueLen, valueLenBytes) = qpackPrefixIntDecode(Array(bytes[valueOffset...]), prefixBits: 7) else { return false }
+                valueOffset += valueLenBytes
+                guard valueOffset + Int(valueLen) <= bytes.count else { return false }
+                let valueBytes = Array(bytes[valueOffset..<(valueOffset + Int(valueLen))])
+                if nameIndex == 24 || nameIndex == 25 { // both are ":status" entries
+                    let value = huffman
+                        ? decodeHuffmanDigits(valueBytes, expectedDigitCount: 3)
+                        : String(bytes: valueBytes, encoding: .ascii)
+                    if value == "200" { return true }
+                }
+                offset = valueOffset + Int(valueLen)
+            } else {
+                // An unrecognized field-line pattern (literal without name
+                // reference, post-base forms) — not observed against the
+                // real server for this response; bail rather than
+                // mis-parse further bytes.
+                return false
+            }
+        }
+        return false
+    }
+
+    /// HPACK/QPACK "prefix integer" decode (RFC 7541 §5.1) — the inverse of
+    /// `Http3Framing`'s private `qpackPrefixInt` encoder. Returns the
+    /// decoded value and the number of bytes it (and any continuation bytes)
+    /// consumed. `prefixBits` excludes the pattern bits already consumed by
+    /// the caller (e.g. 6 for an Indexed Field Line's `1 T` prefix).
+    private static func qpackPrefixIntDecode(_ bytes: [UInt8], prefixBits: Int) -> (value: UInt64, bytesRead: Int)? {
+        guard let first = bytes.first else { return nil }
+        let maxPrefixValue: UInt64 = (1 << prefixBits) - 1
+        var value = UInt64(first) & maxPrefixValue
+        if value < maxPrefixValue { return (value, 1) }
+
+        var index = 1
+        var shift: UInt64 = 0
+        while true {
+            guard index < bytes.count else { return nil }
+            let byte = bytes[index]
+            value += UInt64(byte & 0x7F) << shift
+            index += 1
+            if byte & 0x80 == 0 { break }
+            shift += 7
+        }
+        return (value, index)
+    }
+
+    /// Decodes a Huffman-encoded ASCII-digit string (RFC 7541 Appendix B:
+    /// '0'-'9' are each contiguous, prefix-free 5-bit codes `00000`-`01001`)
+    /// — the only Huffman-encoded value shape this minimal response reader
+    /// needs to understand, since an HTTP status code is always exactly 3
+    /// ASCII digits. Not a general Huffman decoder (deliberately narrow).
+    private static func decodeHuffmanDigits(_ bytes: [UInt8], expectedDigitCount: Int) -> String? {
+        var bits: [UInt8] = []
+        bits.reserveCapacity(bytes.count * 8)
+        for byte in bytes {
+            for i in (0..<8).reversed() {
+                bits.append((byte >> i) & 1)
+            }
+        }
+        guard bits.count >= expectedDigitCount * 5 else { return nil }
+
+        var result = ""
+        var index = 0
+        for _ in 0..<expectedDigitCount {
+            var digit: UInt8 = 0
+            for i in 0..<5 {
+                digit = (digit << 1) | bits[index + i]
+            }
+            guard digit <= 9 else { return nil }
+            result.append(Character(UnicodeScalar(48 + digit)))
+            index += 5
+        }
+        return result
     }
 
     // MARK: - Request/send (RESEARCH.md Pattern 1 — sendWtRequest/sendWtMessage)
