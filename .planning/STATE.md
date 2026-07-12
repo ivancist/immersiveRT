@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 06.1
 current_phase_name: camera-assisted-spatial-tracking-replace-augment-imu-only-po
 status: executing
-stopped_at: Blocked at 06.1-04 checkpoint — no ARCore Android hardware available to run on-device verification
-last_updated: "2026-07-12T00:00:00.000Z"
-last_activity: 2026-07-12
-last_activity_desc: Phase 06.1 Plans 01-03 complete and gate-clean; 06.1-04 human-verify checkpoint deferred (no test device)
+stopped_at: Phase 06.2 context gathered
+last_updated: "2026-07-12T02:24:21.251Z"
+last_activity: 2026-07-11
+last_activity_desc: Phase 06.1 execution started
 progress:
-  total_phases: 9
+  total_phases: 10
   completed_phases: 6
   total_plans: 31
   completed_plans: 30
-  percent: 67
+  percent: 60
 ---
 
 # Project State
@@ -180,6 +180,7 @@ None yet.
 ### Roadmap Evolution
 
 - Phase 06.1 inserted after Phase 6: Camera-Assisted Spatial Tracking — WebXR/ARCore (Android) + iOS VIO library research, replacing unfixable IMU-only dead-reckoning (URGENT)
+- Phase 06.2 inserted after Phase 6: iOS Native Client (ARKit) — native Swift companion app replacing browser phone client for iOS, invoking the native-companion-app escape hatch Phase 06.1 anticipated (Safari has no WebXR immersive-ar) (URGENT)
 
 ## Deferred Items
 
@@ -189,6 +190,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-12T00:00:00.000Z
-Stopped at: Blocked at 06.1-04 checkpoint — no ARCore Android hardware available
-Resume file: .planning/phases/06.1-camera-assisted-spatial-tracking-replace-augment-imu-only-po/06.1-04-PLAN.md
+Last session: 2026-07-12T02:24:21.244Z
+Stopped at: Phase 06.2 context gathered
+Resume file: .planning/phases/06.2-ios-native-client-arkit/06.2-CONTEXT.md
