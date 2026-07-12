@@ -6,15 +6,15 @@ current_phase: 06.1
 current_phase_name: camera-assisted-spatial-tracking-replace-augment-imu-only-po
 status: executing
 stopped_at: Phase 06.2 context gathered
-last_updated: "2026-07-12T02:24:21.251Z"
+last_updated: "2026-07-12T02:30:15.010Z"
 last_activity: 2026-07-11
 last_activity_desc: Phase 06.1 execution started
 progress:
-  total_phases: 10
+  total_phases: 11
   completed_phases: 6
   total_plans: 31
   completed_plans: 30
-  percent: 60
+  percent: 55
 ---
 
 # Project State
@@ -181,6 +181,8 @@ None yet.
 
 - Phase 06.1 inserted after Phase 6: Camera-Assisted Spatial Tracking — WebXR/ARCore (Android) + iOS VIO library research, replacing unfixable IMU-only dead-reckoning (URGENT)
 - Phase 06.2 inserted after Phase 6: iOS Native Client (ARKit) — native Swift companion app replacing browser phone client for iOS, invoking the native-companion-app escape hatch Phase 06.1 anticipated (Safari has no WebXR immersive-ar) (URGENT)
+- Phase 06.2 edited: narrowed scope to native transport parity (WebTransport/WebRTC/pairing/CoreMotion orientation); ARKit tracking split out to new Phase 06.3
+- Phase 06.3 inserted after Phase 06.2: ARKit ARSession world tracking + go/no-go verification checkpoint, split out from original 06.2 scope (URGENT)
 
 ## Deferred Items
 
