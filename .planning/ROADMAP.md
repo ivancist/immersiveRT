@@ -230,7 +230,7 @@ Plans:
 **Goal:** Reimplement the phone client's transport stack natively in Swift (`mobile/ios-app/immersiveRT`, which already has QR scan + pairing-token extraction via QRScannerView.swift/QRTokenParser.swift): WebTransport signaling connection, join-room/pairing flow, WebRTC unreliable data channel fan-out to all desktops in the room, heartbeat, and the 36-byte binary sensor packet schema v1 (Phase 5). Orientation is sourced from CoreMotion's OS-fused device-motion attitude quaternion (mirroring the web client's `DeviceOrientationEvent` — no Madgwick pass, no ARKit yet); position stays at parity with the web client's Kalman dead-reckoning output. This phase proves the native app reaches feature parity with the browser phone client before ARKit tracking is layered on in Phase 06.3.
 **Requirements**: PHONE-03, PHONE-04, PHONE-05, PHONE-06, PHONE-07 (native re-implementation; PHONE-01 stays web-only — N/A for native; SENS-01..05 deferred to 06.3 per D-01; SENS-06 optional scope-fill)
 **Depends on:** Phase 6 (desktop decode/render pipeline)
-**Plans:** 8/9 plans executed
+**Plans:** 9/9 plans complete
 
 Plans:
 **Wave 1**
@@ -255,7 +255,7 @@ Plans:
 
 **Wave 5** *(blocked on 06.2-02/06/07/08)*
 
-- [ ] 06.2-09-PLAN.md — On-device verification: mkcert trust, WT spike decision, CoreMotion axis, WebRTC fan-out, Wake Lock (PHONE-03/04/05/07)
+- [x] 06.2-09-PLAN.md — On-device verification: mkcert trust, WT spike decision, CoreMotion axis, WebRTC fan-out, Wake Lock (PHONE-03/04/05/07)
 
 ### Phase 06.3: iOS Native Client — ARKit World Tracking (INSERTED)
 
