@@ -32,7 +32,7 @@
 - [x] **PHONE-04**: Phone sends sensor packets at the maximum available device rate (~60–100Hz) over the unreliable data channel
 - [x] **PHONE-05**: Phone encodes each sensor packet as compact binary (~40 bytes) using MessagePack — includes sequence number, timestamp, orientation quaternion, gesture displacement, dead-reckoning position, touch events, drift confidence
 - [x] **PHONE-06**: Phone sends a heartbeat every 5 seconds to prevent slot eviction and detect connection loss
-- [ ] **PHONE-07**: Phone activates Wake Lock API to prevent screen lock from killing the sensor stream
+- [x] **PHONE-07**: Phone activates Wake Lock API to prevent screen lock from killing the sensor stream
 
 ### Sensor Fusion (on-device)
 
@@ -127,7 +127,7 @@
 | PHONE-02 | Phase 4 | Complete |
 | PHONE-03 | Phase 4 | Complete |
 | PHONE-06 | Phase 4 | Complete |
-| PHONE-07 | Phase 4 | Pending |
+| PHONE-07 | Phase 4 | Complete |
 | SENS-01 | Phase 5 | Complete |
 | SENS-02 | Phase 5 | Complete |
 | SENS-03 | Phase 5 | Complete |
