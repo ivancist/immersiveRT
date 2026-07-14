@@ -260,13 +260,42 @@ Plans:
 ### Phase 06.3: iOS Native Client — ARKit World Tracking (INSERTED)
 
 **Goal:** Swap the native iOS phone client's position source from CoreMotion dead-reckoning (the Phase 06.2 parity baseline) to ARKit `ARSession` world tracking for precise 6DOF position, keeping orientation semantics compatible with the existing desktop decode/SLERP pipeline (Phase 6) and SDK naming (Phase 7 — `deadReckoningPosition`/`driftConfidence`). This is the native-companion-app escape hatch Phase 06.1 explicitly anticipated for iOS (Safari has no WebXR `immersive-ar`), invoked now instead of the planned web-based VIO/SLAM research spike. Includes a mandatory on-device ARKit tracking-precision verification checkpoint that is a go/no-go gate for the project, mirroring Phase 06.1's Wave 3 on-device checkpoint pattern.
-**Requirements**: SENS-V2-03, SDK-05 (reused from Phase 06.1); TBD for any new ARKit-specific requirement IDs — run `/gsd-discuss-phase 06.3` or `/gsd-spec-phase 06.3` to confirm
+**Requirements**: SENS-V2-03, SDK-05 (reused from Phase 06.1); SENS-06 (native-parity for the already-Complete Phase 5 web touch-capture requirement — no distinct new requirement ID, per CONTEXT.md/RESEARCH.md)
 **Depends on:** Phase 06.2 (native transport parity must land first); references Phase 06.1's WebXR pose-tracking conventions (webxr.ts, phone.ts D-02/D-03/D-05/D-06) as a native-porting guide
-**Plans:** 0 plans
+**Plans:** 8 plans
 
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 06.3 to break down)
+**Wave 1**
+
+- [ ] 06.3-01-PLAN.md — ARKit pose conversion pure functions + freeze-on-loss tracker + tests (D-02/D-07, SENS-V2-03)
+
+**Wave 2** *(blocked on 06.3-01)*
+
+- [ ] 06.3-02-PLAN.md — Headless ARPoseSource + TransportManager wiring + encoder regression (D-01/D-14, SENS-V2-03/SDK-05)
+
+**Wave 3** *(blocked on 06.3-02 — EARLY go/no-go gate)*
+
+- [ ] 06.3-03-PLAN.md — On-device ARKit accuracy checkpoint: axis verify + ~1m³ quant + qual + GO/NO-GO (D-16/D-17/D-18)
+
+**Wave 4** *(blocked on 06.3-03 GO)*
+
+- [ ] 06.3-04-PLAN.md — Full-screen touch capture + local feedback (D-03/D-04/D-05/D-06, SENS-06)
+- [ ] 06.3-07-PLAN.md — Corner long-press gesture recognizer + hit-test tests (D-12)
+
+**Wave 5** *(blocked on 06.3-04)*
+
+- [ ] 06.3-05-PLAN.md — Hold-still auto-recenter + manual recenter via setWorldOrigin (D-10/D-11)
+
+**Wave 6** *(blocked on 06.3-05)*
+
+- [ ] 06.3-06-PLAN.md — D-09 session-start gate + D-08 tracking-limited toasts + Toast cases (D-08/D-09/D-15)
+
+**Wave 7** *(blocked on 06.3-05/06/07)*
+
+- [ ] 06.3-08-PLAN.md — Hidden overlay menu: recenter + disconnect/back (D-11/D-12/D-13)
+
+*Note (traceability): SENS-06 is covered by touch-capture Plan 06.3-04 as native-client parity for the existing Complete SENS-06 (Phase 5) entry; REQUIREMENTS.md traceability may either add a "SENS-06 (native parity)" row for Phase 06.3 or leave it implicitly covered by the existing SENS-06/Phase 5 entry — developer's choice.*
 
 ### Phase 7: SDK Public API
 
