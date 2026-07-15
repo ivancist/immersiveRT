@@ -100,6 +100,17 @@ final class SessionViewModel: ObservableObject {
         pollTimer = nil
     }
 
+    /// Forwards continuous touch state to `TransportManager` (Plan 04,
+    /// SENS-06, D-03) — called directly from `ActiveSessionView`'s
+    /// full-screen `DragGesture`, mirroring the "direct call for control
+    /// actions" half of the "throttled poll for UI, direct call for control
+    /// actions" split documented on `start(token:host:)` above. Never routed
+    /// through `pollTransportState()`'s throttled timer — touch must update
+    /// as fast as the gesture fires, not at the 0.25s UI-poll cadence.
+    func updateTouchState(active: Bool, x: Double, y: Double) {
+        transportManager.updateTouchState(active: active, x: x, y: y)
+    }
+
     /// "Streaming" mirrors `TransportManager.registered` — the CoreMotion
     /// loop + heartbeat are already running once paired (not gated on a
     /// data channel being open), so the Wake Lock equivalent should be too.
@@ -148,50 +159,95 @@ final class SessionViewModel: ObservableObject {
 struct ActiveSessionView: View {
     @ObservedObject var viewModel: SessionViewModel
 
+    /// Drives the local visual feedback overlay (D-06) — `true` for the
+    /// full duration a finger is down anywhere on the view, `false` the
+    /// instant it lifts. Kept as plain `@State` (not routed through
+    /// `viewModel`) since it is purely a rendering concern local to this
+    /// view; the wire-bound touch state lives in `TransportManager` via
+    /// `viewModel.updateTouchState(active:x:y:)`.
+    @State private var touchActive = false
+    @State private var touchLocation: CGPoint = .zero
+
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
+        GeometryReader { geometry in
+            ZStack {
+                VStack(spacing: 20) {
+                    Spacer()
 
-            Image(systemName: statusSymbol)
-                .font(.system(size: 56))
-                .foregroundColor(statusColor)
+                    Image(systemName: statusSymbol)
+                        .font(.system(size: 56))
+                        .foregroundColor(statusColor)
 
-            Text(statusText)
-                .font(.title2)
-                .fontWeight(.semibold)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
+                    Text(statusText)
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
 
-            if let roomCode = viewModel.roomCode {
-                VStack(spacing: 4) {
-                    Text("Room \(roomCode)")
-                        .font(.headline)
-                    if let username = viewModel.username {
-                        Text(username)
-                            .font(.subheadline)
+                    if let roomCode = viewModel.roomCode {
+                        VStack(spacing: 4) {
+                            Text("Room \(roomCode)")
+                                .font(.headline)
+                            if let username = viewModel.username {
+                                Text(username)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+
+                    if case .active(let channels) = viewModel.sessionState {
+                        Text("\(channels.openChannels)/\(channels.totalPeers) connected")
+                            .font(.callout)
                             .foregroundColor(.secondary)
                     }
+
+                    if case .error(let message) = viewModel.sessionState {
+                        Text(message)
+                            .font(.callout)
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                            .accessibilityIdentifier("pair-error-body")
+                    }
+
+                    Spacer()
+                }
+                .padding()
+
+                // Local visual feedback (D-06) — a small dot at the current
+                // touch point, shown only while a finger is down. Ignores
+                // hit testing so it never intercepts the gesture below.
+                if touchActive {
+                    Circle()
+                        .fill(Color.white.opacity(0.35))
+                        .frame(width: 44, height: 44)
+                        .position(touchLocation)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("touch-feedback-indicator")
                 }
             }
-
-            if case .active(let channels) = viewModel.sessionState {
-                Text("\(channels.openChannels)/\(channels.totalPeers) connected")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
-            }
-
-            if case .error(let message) = viewModel.sessionState {
-                Text(message)
-                    .font(.callout)
-                    .foregroundColor(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-                    .accessibilityIdentifier("pair-error-body")
-            }
-
-            Spacer()
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            // Entire screen is the capture surface (D-04) — a plain
+            // `contentShape` over the full `ZStack` ensures the drag gesture
+            // recognizes touches even over transparent/background regions,
+            // not just the VStack's laid-out content.
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        touchActive = true
+                        touchLocation = value.location
+                        let normalized = normalizedTouch(location: value.location, in: geometry.frame(in: .local))
+                        viewModel.updateTouchState(active: true, x: normalized.x, y: normalized.y)
+                    }
+                    .onEnded { value in
+                        touchActive = false
+                        let normalized = normalizedTouch(location: value.location, in: geometry.frame(in: .local))
+                        viewModel.updateTouchState(active: false, x: normalized.x, y: normalized.y)
+                    }
+            )
         }
-        .padding()
     }
 
     private var statusText: String {
