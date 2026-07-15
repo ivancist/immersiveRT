@@ -14,17 +14,21 @@ final class ARPoseConversionTests: XCTestCase {
     // MARK: - Position extraction
 
     /// Position extraction pulls the translation column (columns.3.x/y/z) of
-    /// a known `simd_float4x4` into px/py/pz through the axis-conversion
-    /// function.
+    /// a known `simd_float4x4` through the D-16-fix axis compensation
+    /// (wire.px = -arkit.tx, wire.py = arkit.tz, wire.pz = -arkit.ty; see
+    /// `arKitPacketPosition`'s doc comment) into px/py/pz.
+    ///
+    /// Fixture: tx=1.5, ty=-2.0, tz=3.25. Recomputed expected values:
+    /// px = -tx = -1.5, py = tz = 3.25, pz = -ty = -(-2.0) = 2.0.
     func test_arKitPacketPosition_extractsTranslationColumn() {
         var transform = matrix_identity_float4x4
         transform.columns.3 = SIMD4<Float>(1.5, -2.0, 3.25, 1)
 
         let position = arKitPacketPosition(from: transform)
 
-        XCTAssertEqual(position.px, 1.5, accuracy: 1e-6)
-        XCTAssertEqual(position.py, -2.0, accuracy: 1e-6)
-        XCTAssertEqual(position.pz, 3.25, accuracy: 1e-6)
+        XCTAssertEqual(position.px, -1.5, accuracy: 1e-6)
+        XCTAssertEqual(position.py, 3.25, accuracy: 1e-6)
+        XCTAssertEqual(position.pz, 2.0, accuracy: 1e-6)
     }
 
     // MARK: - Quaternion extraction
@@ -132,34 +136,40 @@ final class ARPoseConversionTests: XCTestCase {
     func test_arPoseTracker_updatesThroughNormalAndLimited_freezesOnNotAvailable() {
         let tracker = ARPoseTracker()
 
+        // Position assertions below use the D-16-fix axis compensation
+        // (wire.px = -arkit.tx, wire.py = arkit.tz, wire.pz = -arkit.ty; see
+        // `arKitPacketPosition`'s doc comment), independently recomputed from
+        // each fixture's columns.3 below (not copied from any prior value).
         var normalTransform = matrix_identity_float4x4
         normalTransform.columns.3 = SIMD4<Float>(1, 2, 3, 1)
         tracker.ingest(transform: normalTransform, trackingState: .normal)
 
+        // Fixture: tx=1, ty=2, tz=3 -> px=-tx=-1, py=tz=3, pz=-ty=-2.
         XCTAssertEqual(tracker.driftConfidence, 1.0)
-        XCTAssertEqual(tracker.currentPose().px, 1, accuracy: 1e-6)
-        XCTAssertEqual(tracker.currentPose().py, 2, accuracy: 1e-6)
-        XCTAssertEqual(tracker.currentPose().pz, 3, accuracy: 1e-6)
+        XCTAssertEqual(tracker.currentPose().px, -1, accuracy: 1e-6)
+        XCTAssertEqual(tracker.currentPose().py, 3, accuracy: 1e-6)
+        XCTAssertEqual(tracker.currentPose().pz, -2, accuracy: 1e-6)
 
         var limitedTransform = matrix_identity_float4x4
         limitedTransform.columns.3 = SIMD4<Float>(4, 5, 6, 1)
         tracker.ingest(transform: limitedTransform, trackingState: .limited(.excessiveMotion))
 
+        // Fixture: tx=4, ty=5, tz=6 -> px=-tx=-4, py=tz=6, pz=-ty=-5.
         // webxr.ts precedent: keep updating last-known-good through .limited.
         XCTAssertEqual(tracker.driftConfidence, 0.5)
-        XCTAssertEqual(tracker.currentPose().px, 4, accuracy: 1e-6)
-        XCTAssertEqual(tracker.currentPose().py, 5, accuracy: 1e-6)
-        XCTAssertEqual(tracker.currentPose().pz, 6, accuracy: 1e-6)
+        XCTAssertEqual(tracker.currentPose().px, -4, accuracy: 1e-6)
+        XCTAssertEqual(tracker.currentPose().py, 6, accuracy: 1e-6)
+        XCTAssertEqual(tracker.currentPose().pz, -5, accuracy: 1e-6)
 
         var lostTransform = matrix_identity_float4x4
         lostTransform.columns.3 = SIMD4<Float>(99, 99, 99, 1)
         tracker.ingest(transform: lostTransform, trackingState: .notAvailable)
 
-        // Freeze: last-known-good stays at the .limited sample's position,
-        // NOT the discarded .notAvailable sample.
-        XCTAssertEqual(tracker.currentPose().px, 4, accuracy: 1e-6)
-        XCTAssertEqual(tracker.currentPose().py, 5, accuracy: 1e-6)
-        XCTAssertEqual(tracker.currentPose().pz, 6, accuracy: 1e-6)
+        // Freeze: last-known-good stays at the .limited sample's position
+        // (px=-4, py=6, pz=-5), NOT the discarded .notAvailable sample.
+        XCTAssertEqual(tracker.currentPose().px, -4, accuracy: 1e-6)
+        XCTAssertEqual(tracker.currentPose().py, 6, accuracy: 1e-6)
+        XCTAssertEqual(tracker.currentPose().pz, -5, accuracy: 1e-6)
         // driftConfidence still drops to 0.0 on .notAvailable.
         XCTAssertEqual(tracker.driftConfidence, 0.0)
     }
