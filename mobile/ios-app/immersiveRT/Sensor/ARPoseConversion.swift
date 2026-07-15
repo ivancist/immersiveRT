@@ -31,16 +31,41 @@ struct ARPose {
 /// Extracts the wire-packet position (px, py, pz) from an ARKit camera
 /// transform's translation column (`transform.columns.3`).
 ///
-/// ⚠️ UNVERIFIED (D-02/Pitfall 3): this is a DIRECT starting-point axis
-/// mapping (px=t.x, py=t.y, pz=t.z) — no sign/reorder constants are
-/// hard-coded here, per RESEARCH.md's explicit instruction not to
-/// analytically guess final axis constants (this project has shipped a wrong
-/// analytically-reasoned axis fix twice: `260710-w83` and the huge-position-
-/// drift debug cycle). Treat this mapping as a reasoned starting point, not a
-/// settled answer, until Plan 03's on-device axis checkpoint (D-16) passes.
+/// ✅ VERIFIED on-device (Plan 03 Task 1, D-16 axis checkpoint, second fix in
+/// this iteration loop — quaternion was the first, see
+/// `arKitPacketQuaternion`): a straight pass-through here (px=t.x, py=t.y,
+/// pz=t.z) produced position axes that did not match device motion on the
+/// real hardware HUD (raw numeric px/py/pz readout, not the visually-
+/// confusing rendered cube). Root cause: `client/src/scene.ts`'s
+/// `updateScene()` position-render formula (non-gesture branch) applies
+/// `obj.mesh.position.set(-rpx, -rpz, rpy)` — i.e. `three.x=-wire.px,
+/// three.y=-wire.pz, three.z=wire.py` — a mapping tuned for the OLD
+/// device-frame dead-reckoning client (W3C earth-frame X=East/Y=North/Z=Up),
+/// not for ARKit's world-frame translation column (Y-up, X-right,
+/// Z-toward-viewer, i.e. -Z is forward).
+///
+/// On-device single-axis motion tests (lift/right/forward), cross-checked
+/// against 3 independently-reported cube-movement observations run through
+/// scene.ts's formula above, confirmed: lifting the phone increases raw
+/// wire.py and moved the cube backward (+Z, toward viewer); moving the phone
+/// right increased raw wire.px and moved the cube left (-X); moving the
+/// phone forward decreased raw wire.pz and moved the cube up (+Y). All three
+/// are consistent with the pass-through mapping combined with scene.ts's
+/// formula above.
+///
+/// Fix: pre-compensate on the wire side so that, after scene.ts's fixed
+/// formula is applied, phone motion maps to intuitive cube motion (up→up,
+/// right→right, forward→into-scene/-Z). Solving scene.ts's formula backward
+/// for the desired mapping gives: wire.px = -arkit.tx, wire.py = arkit.tz,
+/// wire.pz = -arkit.ty. This does NOT touch `arKitPacketQuaternion` — that
+/// mapping was fixed and verified separately in a prior commit of this same
+/// checkpoint loop (D-16). Marked ✅ VERIFIED (empirically cross-checked
+/// against 3 independent on-device axis tests), but — like any step in this
+/// iteration loop — still subject to re-verification if the qualitative
+/// feel-pass later in this checkpoint surfaces anything odd.
 func arKitPacketPosition(from transform: simd_float4x4) -> (px: Double, py: Double, pz: Double) {
     let translation = transform.columns.3
-    return (px: Double(translation.x), py: Double(translation.y), pz: Double(translation.z))
+    return (px: Double(-translation.x), py: Double(translation.z), pz: Double(-translation.y))
 }
 
 /// Extracts the wire-packet quaternion (qw, qx, qy, qz) from an ARKit camera
