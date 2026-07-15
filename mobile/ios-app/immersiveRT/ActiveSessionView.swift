@@ -65,7 +65,30 @@ final class SessionViewModel: ObservableObject {
     /// (consistent with D-18's no-silent-degrade rule) — there is no
     /// CoreMotion fallback path in this app at all (ARKit superseded it
     /// entirely, per `ARPoseSource`'s own doc comment).
+    ///
+    /// BUG FIX (on-device: after Disconnect/Back → Home → starting a NEW
+    /// session, the stale "Session Ended" text from the PREVIOUS session
+    /// briefly/indefinitely reappeared): `SessionViewModel` is a single
+    /// app-lifetime-shared instance (`immersiveRTApp` owns it, required for
+    /// scenePhase handling) — `sessionState` is a `@Published` property
+    /// initialized ONCE at construction, so it is never implicitly reset
+    /// between sessions. `pollTransportState()`'s `.connecting`/`.idle`
+    /// case is deliberately a no-op ("nothing to reduce yet — stays at the
+    /// default `.connecting`"), an assumption that only holds if
+    /// `sessionState` actually STARTS at `.connecting` for this session —
+    /// which is false for every session after the first, since a prior
+    /// session's terminal `.ended`/`.error` value otherwise survives
+    /// untouched until some future pairAck/pairError/channelOpen event
+    /// happens to overwrite it. Reset explicitly to a clean slate here,
+    /// before either the D-09 precondition check or `startPolling()`, so
+    /// every new session always begins from `.connecting` (matching this
+    /// property's own declared default) rather than whatever the previous
+    /// session left behind. `isToastPresented` is reset for the same
+    /// reason (a stale D-08/D-09 toast from the last session must not
+    /// carry over either).
     func start(token: String, host: String) {
+        sessionState = .connecting
+        isToastPresented = false
         Task {
             if let startupError = await ARPoseSource.checkARStartupPreconditions() {
                 presentStartupError(startupError)
