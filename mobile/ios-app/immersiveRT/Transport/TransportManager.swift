@@ -149,6 +149,16 @@ final class TransportManager {
         arPoseSource.recenter()
     }
 
+    /// Set by `SessionViewModel` to observe `ARPoseSource`'s D-08
+    /// tracking-limited-reason messages for local DynamicToast presentation
+    /// (Plan 06). `ARPoseSource` itself is a private implementation detail
+    /// of this manager, so this is the seam through which its per-frame
+    /// (change-only) callback reaches the view layer — hopped to
+    /// `@MainActor` in `startSensorLoopIfNeeded()` below, exactly like the
+    /// existing `onPose` wiring, since `ARPoseSource`'s callback fires on
+    /// its own dedicated background queue.
+    var trackingLimitedMessageHandler: ((String?) -> Void)?
+
     init(
         myId: String = UUID().uuidString,
         makeWebTransport: @escaping (String, String) -> SignalingTransport = { host, myId in
@@ -555,6 +565,11 @@ final class TransportManager {
         arPoseSource.onPose = { [weak self] pose in
             Task { @MainActor in
                 self?.handlePose(pose)
+            }
+        }
+        arPoseSource.onTrackingLimitedMessageChanged = { [weak self] message in
+            Task { @MainActor in
+                self?.trackingLimitedMessageHandler?(message)
             }
         }
         arPoseSource.start()

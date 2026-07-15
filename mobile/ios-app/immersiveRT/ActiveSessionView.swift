@@ -18,6 +18,14 @@ import UIKit
 final class SessionViewModel: ObservableObject {
     @Published private(set) var sessionState: SessionState = .connecting
 
+    /// Presented via `dynamicIslandToast` (D-15) for D-09 (start-blocked)
+    /// and D-08 (tracking-limited) local feedback — `currentToast`'s value
+    /// is only meaningful while `isToastPresented` is `true`; it defaults to
+    /// a harmless placeholder otherwise (mirrors `ContentView`'s existing
+    /// `dynamicIslandToast(isPresented:duration:value:)` usage pattern).
+    @Published private(set) var currentToast: Toast = .arUnavailable
+    @Published var isToastPresented = false
+
     var roomCode: String? { transportManager.roomCode }
     var username: String? { transportManager.myUsername }
 
@@ -37,16 +45,65 @@ final class SessionViewModel: ObservableObject {
     // fix applied to `ContentView.init`).
     init(transportManager: TransportManager? = nil) {
         self.transportManager = transportManager ?? TransportManager()
+        self.transportManager.trackingLimitedMessageHandler = { [weak self] message in
+            self?.handleTrackingLimitedMessage(message)
+        }
     }
 
     /// Kicks off the connect → pair → fan-out flow (`TransportManager.start`)
     /// and starts the throttled UI poll — called from `ContentView` on a
-    /// successful QR scan.
+    /// successful QR scan. D-09 gate: `ARPoseSource.checkARStartupPreconditions()`
+    /// runs FIRST — if ARKit is unsupported or camera access is denied, the
+    /// session is hard-blocked (`presentStartupError(_:)`) and NEITHER
+    /// `startPolling()` NOR `transportManager.start(...)` is ever reached.
+    /// This is a hard block, never a silent CoreMotion-style degrade
+    /// (consistent with D-18's no-silent-degrade rule) — there is no
+    /// CoreMotion fallback path in this app at all (ARKit superseded it
+    /// entirely, per `ARPoseSource`'s own doc comment).
     func start(token: String, host: String) {
-        startPolling()
         Task {
+            if let startupError = await ARPoseSource.checkARStartupPreconditions() {
+                presentStartupError(startupError)
+                return
+            }
+            startPolling()
             await transportManager.start(token: token, host: host)
         }
+    }
+
+    /// D-09: hard-blocks session start by transitioning `sessionState` to
+    /// `.error` (reuses the existing `.pairError` reduction so the red error
+    /// text + `pair-error-body` accessibility identifier already wired in
+    /// `ActiveSessionView` work unchanged) AND separately presents the
+    /// matching `Toast.arUnavailable`/`Toast.cameraPermissionDenied` (D-15).
+    private func presentStartupError(_ error: ARStartupError) {
+        let message: String
+        switch error {
+        case .deviceUnsupported:
+            currentToast = .arUnavailable
+            message = "This device does not support ARKit world tracking."
+        case .cameraDenied, .cameraRestricted:
+            currentToast = .cameraPermissionDenied
+            message = "Camera access is required for motion tracking."
+        }
+        isToastPresented = true
+        sessionState = SessionState.reduce(state: sessionState, event: .pairError(message))
+    }
+
+    /// D-08: presents `Toast.trackingLimited(_:)` for the current
+    /// `.limited(reason:)` sub-reason, or dismisses it once tracking
+    /// recovers (`message == nil`). Called only when `ARPoseSource`'s
+    /// tracking-limited message CHANGES (via `TransportManager`'s forward of
+    /// `ARPoseSource.onTrackingLimitedMessageChanged`), never once per ARKit
+    /// frame — the wire `driftConfidence` is unaffected (stays flat 0.5 for
+    /// any `.limited` reason, per `ARPoseConversion.swift`'s `driftConfidence(for:)`).
+    private func handleTrackingLimitedMessage(_ message: String?) {
+        guard let message else {
+            isToastPresented = false
+            return
+        }
+        currentToast = .trackingLimited(message)
+        isToastPresented = true
     }
 
     private func startPolling() {
@@ -247,6 +304,15 @@ struct ActiveSessionView: View {
                         viewModel.updateTouchState(active: false, x: normalized.x, y: normalized.y)
                     }
             )
+            // D-09 (start-blocked) / D-08 (tracking-limited) local feedback,
+            // all routed through the existing DynamicToast component (D-15).
+            // No auto-dismiss duration (unlike ContentView's `.invalidQRCode`
+            // usage): D-08 dismissal is driven explicitly by
+            // `handleTrackingLimitedMessage(_:)` on recovery, and a D-09
+            // block should stay visible (swipe-to-dismiss, per `ToastView`'s
+            // existing drag gesture) rather than silently vanish after a
+            // fixed timeout while the session remains blocked.
+            .dynamicIslandToast(isPresented: $viewModel.isToastPresented, value: viewModel.currentToast)
         }
     }
 

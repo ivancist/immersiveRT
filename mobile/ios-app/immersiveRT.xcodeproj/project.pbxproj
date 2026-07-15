@@ -358,7 +358,7 @@
 				DEVELOPMENT_TEAM = 4X5VJK7YLN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "The application requires access to the camera to scan QR codes.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is used to scan the pairing QR code and to track this device's motion. Camera images are never shown, saved, or sent.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -395,7 +395,7 @@
 				DEVELOPMENT_TEAM = 4X5VJK7YLN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "The application requires access to the camera to scan QR codes.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is used to scan the pairing QR code and to track this device's motion. Camera images are never shown, saved, or sent.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
