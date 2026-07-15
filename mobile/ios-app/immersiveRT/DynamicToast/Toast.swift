@@ -62,4 +62,16 @@ struct Toast {
               title: "Tracking Limited",
               message: message)
     }
+
+    /// D-11: brief confirmation shown after the Plan 08 overlay-menu
+    /// Recenter button re-zeros this player's ARKit world origin — purely
+    /// local feedback, no wire effect (mirrors `trackingLimited`'s
+    /// informational, non-error styling).
+    static var recentered: Toast {
+        Toast(symbol: "location.viewfinder",
+              symbolFont: .system(size: 26),
+              symbolForegroundStyle: (.white, .blue),
+              title: "Recentered",
+              message: "Your position has been re-zeroed")
+    }
 }
