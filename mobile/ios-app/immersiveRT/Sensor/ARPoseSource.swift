@@ -76,18 +76,26 @@ final class ARPoseSource: NSObject, ARSessionDelegate {
     /// Fires with a human-readable message for the CURRENT
     /// `ARCamera.TrackingState.limited(reason:)` sub-reason (D-08) — `nil`
     /// once tracking returns to `.normal`/`.notAvailable`. Fires only when
-    /// the message actually CHANGES (not once per ARKit frame — see
-    /// `reportTrackingLimitedMessageIfChanged(for:)`), on the same
-    /// background `sessionQueue` as `onPose`; callers must hop to
-    /// `@MainActor` themselves, exactly like `onPose`'s own doc comment
-    /// instructs, and are expected to present it at a throttled UI rate.
-    /// Never affects the wire `driftConfidence`, which stays a flat 0.5 for
-    /// any `.limited` reason (D-07/D-08) — this is purely local UX.
+    /// the message actually CHANGES AND has been stable for a minimum dwell
+    /// duration (not once per ARKit frame, and not on every raw flicker —
+    /// see `reportTrackingLimitedMessageIfChanged(for:)` and
+    /// `TrackingLimitedMessageDebouncer`), on the same background
+    /// `sessionQueue` as `onPose`; callers must hop to `@MainActor`
+    /// themselves, exactly like `onPose`'s own doc comment instructs, and
+    /// are expected to present it at a throttled UI rate. Never affects the
+    /// wire `driftConfidence`, which stays a flat 0.5 for any `.limited`
+    /// reason (D-07/D-08) — this is purely local UX.
     var onTrackingLimitedMessageChanged: ((String?) -> Void)?
 
-    /// Dedup state for `onTrackingLimitedMessageChanged` — read/written only
-    /// on `sessionQueue`.
-    private var lastReportedTrackingLimitedMessage: String?
+    /// Min-dwell anti-flicker debounce for `onTrackingLimitedMessageChanged`
+    /// (06.3-06 Task 3 on-device follow-up fix) — read/written only on
+    /// `sessionQueue`. See `TrackingLimitedMessageDebouncer`'s own doc
+    /// comment for why a strict equality-only dedup was insufficient: real
+    /// ARKit tracking state can flicker frame-to-frame between different
+    /// `.limited(reason:)` sub-reasons, or briefly bounce to `.normal` and
+    /// back to the same reason, and each such flicker was re-presenting the
+    /// shared toast overlay ("toasts accumulate ... also of the same type").
+    private let trackingLimitedDebouncer = TrackingLimitedMessageDebouncer()
 
     private let session: ARSession
     private let tracker: ARPoseTracker
@@ -193,9 +201,12 @@ final class ARPoseSource: NSObject, ARSessionDelegate {
     /// D-08: derives the current `.limited(reason:)` message (`nil`
     /// otherwise via `trackingLimitedReasonMessage(_:)`,
     /// `ARPoseConversion.swift`) and invokes
-    /// `onTrackingLimitedMessageChanged` only when it differs from the
-    /// last-reported value — avoids firing the same message 60 times/sec
-    /// (acceptance criteria: throttled, not on the 60Hz path).
+    /// `onTrackingLimitedMessageChanged` only when `trackingLimitedDebouncer`
+    /// confirms the message has both CHANGED and been the continuous
+    /// per-frame candidate for its minimum dwell duration — avoids firing
+    /// the same message 60 times/sec (acceptance criteria: throttled, not on
+    /// the 60Hz path) AND avoids re-firing on brief frame-to-frame flicker
+    /// between sub-reasons or a momentary bounce back to `.normal`.
     private func reportTrackingLimitedMessageIfChanged(for trackingState: ARCamera.TrackingState) {
         let message: String?
         if case .limited(let reason) = trackingState {
@@ -203,9 +214,9 @@ final class ARPoseSource: NSObject, ARSessionDelegate {
         } else {
             message = nil
         }
-        guard message != lastReportedTrackingLimitedMessage else { return }
-        lastReportedTrackingLimitedMessage = message
-        onTrackingLimitedMessageChanged?(message)
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        guard case .report(let reportedMessage) = trackingLimitedDebouncer.ingest(candidate: message, nowMs: nowMs) else { return }
+        onTrackingLimitedMessageChanged?(reportedMessage)
     }
 
     /// D-10: drives `holdStillDetector` from the current pose's position
