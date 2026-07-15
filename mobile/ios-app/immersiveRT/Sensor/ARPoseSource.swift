@@ -1,6 +1,17 @@
 import ARKit
+import AVFoundation
 import Foundation
 import simd
+
+/// Startup precondition failure reasons (D-09), checked once via
+/// `ARPoseSource.checkARStartupPreconditions()` BEFORE any `ARSession` is
+/// ever run. A hard block, never a silent CoreMotion-style degrade — mirrors
+/// RESEARCH.md Pattern 4 (`ARStartupError`) verbatim.
+enum ARStartupError: Error, Equatable {
+    case deviceUnsupported
+    case cameraDenied
+    case cameraRestricted
+}
 
 /// Headless-`ARSession` world-tracking pose source (D-01, D-14) — the
 /// ARKit equivalent of `CoreMotionSource`, superseding it for BOTH
@@ -62,6 +73,22 @@ final class ARPoseSource: NSObject, ARSessionDelegate {
     /// (mirrors every other piece of frame-driven state in this class).
     private(set) var isCalibrated = false
 
+    /// Fires with a human-readable message for the CURRENT
+    /// `ARCamera.TrackingState.limited(reason:)` sub-reason (D-08) — `nil`
+    /// once tracking returns to `.normal`/`.notAvailable`. Fires only when
+    /// the message actually CHANGES (not once per ARKit frame — see
+    /// `reportTrackingLimitedMessageIfChanged(for:)`), on the same
+    /// background `sessionQueue` as `onPose`; callers must hop to
+    /// `@MainActor` themselves, exactly like `onPose`'s own doc comment
+    /// instructs, and are expected to present it at a throttled UI rate.
+    /// Never affects the wire `driftConfidence`, which stays a flat 0.5 for
+    /// any `.limited` reason (D-07/D-08) — this is purely local UX.
+    var onTrackingLimitedMessageChanged: ((String?) -> Void)?
+
+    /// Dedup state for `onTrackingLimitedMessageChanged` — read/written only
+    /// on `sessionQueue`.
+    private var lastReportedTrackingLimitedMessage: String?
+
     private let session: ARSession
     private let tracker: ARPoseTracker
 
@@ -88,10 +115,38 @@ final class ARPoseSource: NSObject, ARSessionDelegate {
         super.init()
     }
 
+    /// D-09: checks whether ARKit world tracking CAN start — device support
+    /// AND camera permission — BEFORE any `ARSession` is ever run. Requests
+    /// camera access when not yet determined (mirrors `QRScannerView.swift`'s
+    /// existing camera-permission dance). Returns `nil` when both checks
+    /// pass. Callers must treat a non-nil result as a HARD BLOCK: never call
+    /// `start()` and never fall back to CoreMotion — surface
+    /// `Toast.arUnavailable`/`Toast.cameraPermissionDenied` instead
+    /// (RESEARCH.md Pattern 4; consistent with D-18's no-silent-degrade rule).
+    static func checkARStartupPreconditions() async -> ARStartupError? {
+        guard ARWorldTrackingConfiguration.isSupported else { return .deviceUnsupported }
+
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            return nil
+        case .notDetermined:
+            let granted = await AVCaptureDevice.requestAccess(for: .video)
+            return granted ? nil : .cameraDenied
+        case .denied:
+            return .cameraDenied
+        case .restricted:
+            return .cameraRestricted
+        @unknown default:
+            return .cameraDenied
+        }
+    }
+
     /// Starts headless world tracking. No-op (no crash, no callback) if
     /// `ARWorldTrackingConfiguration.isSupported` is false — mirrors
     /// `CoreMotionSource.start()`'s `isDeviceMotionAvailable` capability
-    /// guard exactly.
+    /// guard exactly. Callers are expected to have already gated session
+    /// start on `checkARStartupPreconditions()` (D-09); this guard is a
+    /// defense-in-depth safety net, not the primary D-09 enforcement point.
     func start() {
         guard ARWorldTrackingConfiguration.isSupported else { return }
         let config = ARWorldTrackingConfiguration()
@@ -129,9 +184,28 @@ final class ARPoseSource: NSObject, ARSessionDelegate {
     /// buffer from `frame`.
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         tracker.ingest(transform: frame.camera.transform, trackingState: frame.camera.trackingState)
+        reportTrackingLimitedMessageIfChanged(for: frame.camera.trackingState)
         let pose = tracker.currentPose()
         updateAutoCalibration(with: pose)
         onPose?(pose)
+    }
+
+    /// D-08: derives the current `.limited(reason:)` message (`nil`
+    /// otherwise via `trackingLimitedReasonMessage(_:)`,
+    /// `ARPoseConversion.swift`) and invokes
+    /// `onTrackingLimitedMessageChanged` only when it differs from the
+    /// last-reported value — avoids firing the same message 60 times/sec
+    /// (acceptance criteria: throttled, not on the 60Hz path).
+    private func reportTrackingLimitedMessageIfChanged(for trackingState: ARCamera.TrackingState) {
+        let message: String?
+        if case .limited(let reason) = trackingState {
+            message = trackingLimitedReasonMessage(reason)
+        } else {
+            message = nil
+        }
+        guard message != lastReportedTrackingLimitedMessage else { return }
+        lastReportedTrackingLimitedMessage = message
+        onTrackingLimitedMessageChanged?(message)
     }
 
     /// D-10: drives `holdStillDetector` from the current pose's position
