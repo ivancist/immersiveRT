@@ -283,6 +283,15 @@ struct ActiveSessionView: View {
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height)
 
+                // Bug fix: lets touches at the true physical top corners
+                // (where iOS reserves a Control Center/Notification Center
+                // system-gesture band) reach `CornerLongPressRecognizer`
+                // instead of being intercepted by the system first. See
+                // `ScreenEdgeGestureDeferringView`'s doc comment for the
+                // full mechanism/verification.
+                ScreenEdgeGestureDeferringView()
+                    .frame(width: 0, height: 0)
+
                 VStack(spacing: 20) {
                     Spacer()
 
