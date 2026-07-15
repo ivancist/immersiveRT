@@ -42,8 +42,34 @@ final class ARPoseSource: NSObject, ARSessionDelegate {
     /// `CoreMotionSource.onOrientation`'s doc comment exactly).
     var onPose: ((ARPose) -> Void)?
 
+    /// Fires with the current per-frame hold-still result (Task 1's
+    /// `HoldStillDetector.ingest`) on every frame until auto-calibration
+    /// completes — lets a future UI (Plan 06's DynamicToast wiring)
+    /// indicate "hold still to calibrate…" progress. Called on the same
+    /// background `sessionQueue` as `onPose`; callers needing UI-visible
+    /// state must hop to `@MainActor` themselves, exactly like `onPose`.
+    var onCalibrationProgress: ((Bool) -> Void)?
+
+    /// Fires exactly once, the moment auto-calibration (D-10) completes:
+    /// the device was held still for `HoldStillDetector`'s required
+    /// duration and `recenter()` has just been called to lock the world
+    /// origin. Called on `sessionQueue` — same hop-to-`@MainActor`
+    /// convention as `onPose`.
+    var onCalibrationComplete: (() -> Void)?
+
+    /// `true` once the auto-calibration recenter (D-10) has fired for this
+    /// session. Flips to `true` exactly once; read from `sessionQueue` only
+    /// (mirrors every other piece of frame-driven state in this class).
+    private(set) var isCalibrated = false
+
     private let session: ARSession
     private let tracker: ARPoseTracker
+
+    /// Drives the D-10 auto-calibration gate purely from `ARCamera.transform`
+    /// position deltas (never CoreMotion/accelerometer — see
+    /// `HoldStillDetector`'s own doc comment). Reset per `ARPoseSource`
+    /// instance, i.e. once per app-launch session.
+    private let holdStillDetector: HoldStillDetector
 
     /// Dedicated, non-main queue for `ARSessionDelegate` delivery. Serial
     /// (a plain `DispatchQueue` is serial by default) so pose samples are
@@ -51,9 +77,14 @@ final class ARPoseSource: NSObject, ARSessionDelegate {
     /// — see the delegate-queue decision documented above.
     private let sessionQueue = DispatchQueue(label: "com.immersiveRT.ARPoseSource.sessionQueue")
 
-    init(session: ARSession = ARSession(), tracker: ARPoseTracker = ARPoseTracker()) {
+    init(
+        session: ARSession = ARSession(),
+        tracker: ARPoseTracker = ARPoseTracker(),
+        holdStillDetector: HoldStillDetector = HoldStillDetector()
+    ) {
         self.session = session
         self.tracker = tracker
+        self.holdStillDetector = holdStillDetector
         super.init()
     }
 
@@ -77,9 +108,12 @@ final class ARPoseSource: NSObject, ARSessionDelegate {
     }
 
     /// Re-anchors the world origin to the device's CURRENT pose, WITHOUT a
-    /// full session restart (RESEARCH.md Pattern 2) — fully wired to a
-    /// user-facing action in Plan 05 (D-10/D-11); this stub only performs
-    /// the underlying ARKit call.
+    /// full session restart (RESEARCH.md Pattern 2 — never re-run the
+    /// session with a tracking-reset option for a routine recenter, since
+    /// that would cause a visible tracking blip). Invoked automatically
+    /// once, after auto-calibration completes (D-10, see
+    /// `session(_:didUpdate:)` below), and manually on demand via
+    /// `TransportManager.recenter()` (D-11).
     func recenter() {
         session.setWorldOrigin(relativeTransform: matrix_identity_float4x4)
     }
@@ -88,12 +122,36 @@ final class ARPoseSource: NSObject, ARSessionDelegate {
 
     /// Fires once per ARKit frame (headless — no rendering surface
     /// involved). Feeds ONLY `frame.camera.transform` and
-    /// `frame.camera.trackingState` into `tracker`, then invokes `onPose`
+    /// `frame.camera.trackingState` into `tracker`, drives the D-10
+    /// auto-calibration gate from the resulting pose, then invokes `onPose`
     /// with the tracker's current wire-ready pose. D-14: never reads
     /// `frame.capturedImage`/`frame.capturedDepthData` or any other raw
     /// buffer from `frame`.
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         tracker.ingest(transform: frame.camera.transform, trackingState: frame.camera.trackingState)
-        onPose?(tracker.currentPose())
+        let pose = tracker.currentPose()
+        updateAutoCalibration(with: pose)
+        onPose?(pose)
+    }
+
+    /// D-10: drives `holdStillDetector` from the current pose's position
+    /// only (never orientation/CoreMotion — see `HoldStillDetector`'s doc
+    /// comment). Once the device has been held still for the required
+    /// duration, calls `recenter()` exactly once to lock the world origin,
+    /// marks the stream calibrated, and notifies `onCalibrationComplete`.
+    /// A no-op after `isCalibrated` is already `true` — this is a one-time,
+    /// session-start gate, not a repeating recenter.
+    private func updateAutoCalibration(with pose: ARPose) {
+        guard !isCalibrated else { return }
+
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        let isStill = holdStillDetector.ingest(px: pose.px, py: pose.py, pz: pose.pz, nowMs: nowMs)
+        onCalibrationProgress?(isStill)
+
+        guard isStill else { return }
+
+        isCalibrated = true
+        recenter()
+        onCalibrationComplete?()
     }
 }
