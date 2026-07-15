@@ -48,18 +48,36 @@ func arKitPacketPosition(from transform: simd_float4x4) -> (px: Double, py: Doub
 /// RESEARCH.md's Don't Hand-Roll table — never hand-roll a 3x3-to-quaternion
 /// conversion).
 ///
-/// ⚠️ UNVERIFIED (D-02/Pitfall 3): the resulting quaternion is passed through
-/// DIRECTLY in packet-field order (qw/qx/qy/qz straight from the simd
-/// quaternion's real/imaginary parts) — no sign/reorder constants are
-/// hard-coded here. Treat this mapping as a reasoned starting point, not a
-/// settled answer, until Plan 03's on-device axis checkpoint (D-16) passes.
+/// ✅ VERIFIED on-device (Plan 03 Task 1, D-16 axis checkpoint): a straight
+/// pass-through here produced roll/yaw swapped with coupled roll on the real
+/// hardware HUD. Root cause: `client/src/scene.ts`'s `updateScene()` applies a
+/// FIXED -90°-about-X conjugate swizzle to every incoming wire quaternion,
+/// on the assumption it is expressed in the W3C `DeviceOrientationEvent` earth
+/// frame (X=East, Y=North, Z=Up) —
+/// `scratchQuat.set(state.qx, state.qz, -state.qy, state.qw)`, i.e.
+/// `three.x=wire.qx, three.y=wire.qz, three.z=-wire.qy` (w unaffected by a
+/// pure vector-part conjugation). ARKit's camera-transform quaternion is NOT
+/// in that W3C frame — ARKit's own convention (Y-up, X-right, Z-toward-viewer)
+/// is already structurally compatible with Three.js's default frame, so
+/// letting scene.ts's W3C-specific swizzle apply unconditionally introduced an
+/// unwanted rotation (the observed roll/yaw swap + coupling).
+///
+/// Fix: pre-apply the INVERSE of scene.ts's swizzle on the wire side, so the
+/// net effect (wire -> scene.ts's swizzle -> Three.js) reproduces ARKit's raw
+/// quaternion unchanged. Solving `three.{x,y,z} == arkit.{x,y,z}` for the
+/// wire fields against scene.ts's mapping gives: wire.qx = arkit.qx (unchanged),
+/// wire.qy = -arkit.qz, wire.qz = arkit.qy (qw always unchanged — pure vector
+/// swap/negate). This does NOT touch `arKitPacketPosition` — position mapping
+/// is a separate, still-pending iteration of this same checkpoint loop (D-16).
+/// If a further axis issue surfaces later in this checkpoint's iteration, this
+/// mapping is subject to re-verification like any other step in the loop.
 func arKitPacketQuaternion(from transform: simd_float4x4) -> (qw: Double, qx: Double, qy: Double, qz: Double) {
     let quaternion = simd_quaternion(transform)
     return (
         qw: Double(quaternion.real),
         qx: Double(quaternion.imag.x),
-        qy: Double(quaternion.imag.y),
-        qz: Double(quaternion.imag.z)
+        qy: Double(-quaternion.imag.z),
+        qz: Double(quaternion.imag.y)
     )
 }
 
