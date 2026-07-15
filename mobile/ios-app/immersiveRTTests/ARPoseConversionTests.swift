@@ -31,6 +31,16 @@ final class ARPoseConversionTests: XCTestCase {
 
     /// Quaternion extraction of a known rotation matrix (90 degrees about the
     /// X axis) yields the expected qw/qx/qy/qz, normalized.
+    ///
+    /// Post-D-16-fix mapping is qw=w, qx=x, qy=-z, qz=y (see
+    /// `arKitPacketQuaternion`'s doc comment). For a pure X-axis rotation the
+    /// raw ARKit quaternion's y and z imaginary components are both exactly
+    /// zero, and swap/negate of zero is still zero — so this fixture's
+    /// expected values are numerically IDENTICAL before and after the fix
+    /// (recomputed and confirmed below, not copy-pasted). This fixture alone
+    /// cannot discriminate the old pass-through mapping from the new
+    /// swap-and-negate mapping; `test_arKitPacketQuaternion_swapsAndNegatesYZForRotationWithNonzeroYZComponents`
+    /// below uses a Z-axis rotation specifically to exercise that distinction.
     func test_arKitPacketQuaternion_extractsNormalizedQuaternionFromKnownRotation() {
         // 90-degree rotation about the X axis:
         //   columns.0 = (1, 0, 0, 0)
@@ -45,10 +55,50 @@ final class ARPoseConversionTests: XCTestCase {
 
         let quaternion = arKitPacketQuaternion(from: transform)
 
+        // Raw ARKit quaternion for this fixture: w=x=halfAngle, y=z=0.
+        // New mapping: qw=w, qx=x, qy=-z=-0=0, qz=y=0 -- unchanged from before the fix.
         let halfAngle = sqrt(2.0) / 2.0 // cos(45deg) == sin(45deg)
         XCTAssertEqual(quaternion.qw, halfAngle, accuracy: 1e-5)
         XCTAssertEqual(quaternion.qx, halfAngle, accuracy: 1e-5)
         XCTAssertEqual(quaternion.qy, 0, accuracy: 1e-5)
+        XCTAssertEqual(quaternion.qz, 0, accuracy: 1e-5)
+
+        let magnitude = sqrt(
+            quaternion.qw * quaternion.qw
+                + quaternion.qx * quaternion.qx
+                + quaternion.qy * quaternion.qy
+                + quaternion.qz * quaternion.qz
+        )
+        XCTAssertEqual(magnitude, 1.0, accuracy: 1e-5, "Extracted quaternion must be normalized")
+    }
+
+    /// Quaternion extraction of a 90-degree rotation about the Z axis
+    /// specifically exercises the D-16-fix's y/z swap-and-negate (unlike the
+    /// X-axis fixture above, this rotation's raw ARKit quaternion has a
+    /// nonzero z imaginary component and zero y, so old pass-through vs. new
+    /// swap-and-negate produce numerically different results).
+    func test_arKitPacketQuaternion_swapsAndNegatesYZForRotationWithNonzeroYZComponents() {
+        // 90-degree rotation about the Z axis:
+        //   columns.0 = (0, 1, 0, 0)
+        //   columns.1 = (-1, 0, 0, 0)
+        //   columns.2 = (0, 0, 1, 0)
+        //   columns.3 = (0, 0, 0, 1)
+        var transform = matrix_identity_float4x4
+        transform.columns.0 = SIMD4<Float>(0, 1, 0, 0)
+        transform.columns.1 = SIMD4<Float>(-1, 0, 0, 0)
+        transform.columns.2 = SIMD4<Float>(0, 0, 1, 0)
+        transform.columns.3 = SIMD4<Float>(0, 0, 0, 1)
+
+        let quaternion = arKitPacketQuaternion(from: transform)
+
+        // Raw ARKit quaternion for this fixture (via the standard
+        // trace-based rotation-matrix-to-quaternion formula, matching
+        // simd_quaternion(transform)): w=halfAngle, x=0, y=0, z=halfAngle.
+        // New mapping: qw=w=halfAngle, qx=x=0, qy=-z=-halfAngle, qz=y=0.
+        let halfAngle = sqrt(2.0) / 2.0
+        XCTAssertEqual(quaternion.qw, halfAngle, accuracy: 1e-5)
+        XCTAssertEqual(quaternion.qx, 0, accuracy: 1e-5)
+        XCTAssertEqual(quaternion.qy, -halfAngle, accuracy: 1e-5)
         XCTAssertEqual(quaternion.qz, 0, accuracy: 1e-5)
 
         let magnitude = sqrt(
