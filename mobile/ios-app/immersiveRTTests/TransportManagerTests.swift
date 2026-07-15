@@ -582,6 +582,103 @@ final class TransportManagerTests: XCTestCase {
         XCTAssertGreaterThan(scheduler.tokens.count, heartbeatTokenCountAfterPair, "heartbeat must be restarted on successful reconnect")
     }
 
+    // MARK: - Task 1 (06.3-08): disconnect() intentional teardown (D-13)
+
+    func test_disconnect_whilePaired_endsAndClearsReconnectToken() async {
+        let spy = TransportFactorySpy()
+        var wtFake: ScriptedSignalingTransport?
+        spy.makeWT = {
+            let t = ScriptedSignalingTransport(isWebTransport: true)
+            t.requestHandler = { _ in pairAckEnvelope() }
+            wtFake = t
+            return t
+        }
+        let manager = makeManager(spy: spy)
+        await manager.start(token: "tok", host: "example.com")
+        XCTAssertEqual(manager.state, .paired)
+        XCTAssertTrue(manager.isConnected)
+
+        manager.disconnect()
+
+        XCTAssertEqual(manager.state, .ended)
+        XCTAssertNil(manager.reconnectToken)
+        XCTAssertFalse(manager.registered)
+        XCTAssertEqual(wtFake?.closeCallCount, 1, "disconnect() must close the active transport")
+        XCTAssertFalse(manager.isConnected)
+    }
+
+    /// Intentional disconnect must not resurrect the session via the
+    /// transport's own `onClosed` → `attemptReconnect()` wiring: clearing
+    /// `reconnectToken` BEFORE the transport closes means any subsequent
+    /// `attemptReconnect()` call sees no token and ends immediately, exactly
+    /// like `finishReconnectFailure()`'s terminal path.
+    func test_disconnect_doesNotAutoReconnect() async {
+        let spy = TransportFactorySpy()
+        spy.makeWT = {
+            let t = ScriptedSignalingTransport(isWebTransport: true)
+            t.requestHandler = { _ in pairAckEnvelope() }
+            return t
+        }
+        let manager = makeManager(spy: spy)
+        await manager.start(token: "tok", host: "example.com")
+        spy.resetCallCounts()
+
+        manager.disconnect()
+        await waitUntil { manager.state == .ended }
+
+        XCTAssertEqual(manager.state, .ended)
+        XCTAssertEqual(spy.webTransportCalls.count, 0, "disconnect() must never trigger a WT reconnect attempt")
+        XCTAssertEqual(spy.webSocketCalls.count, 0, "disconnect() must never trigger a WS reconnect attempt")
+    }
+
+    func test_disconnect_idempotent_secondCallIsNoOp() async {
+        let spy = TransportFactorySpy()
+        spy.makeWT = {
+            let t = ScriptedSignalingTransport(isWebTransport: true)
+            t.requestHandler = { _ in pairAckEnvelope() }
+            return t
+        }
+        let manager = makeManager(spy: spy)
+        await manager.start(token: "tok", host: "example.com")
+
+        manager.disconnect()
+        manager.disconnect() // must not crash or misbehave
+
+        XCTAssertEqual(manager.state, .ended)
+    }
+
+    func test_isConnected_falseBeforeStartAndAfterEnded() async {
+        let spy = TransportFactorySpy()
+        let manager = makeManager(spy: spy)
+        XCTAssertFalse(manager.isConnected, ".idle is not connected (D-13: routes to onExit)")
+
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.connectError = TestError.generic; return t }
+        spy.makeWS = { let t = ScriptedSignalingTransport(isWebTransport: false); t.connectError = TestError.generic; return t }
+        await manager.start(token: "tok", host: "example.com")
+        XCTAssertFalse(manager.isConnected, ".error is not connected (D-13: routes to onExit, not disconnect())")
+    }
+
+    func test_isConnected_trueWhileReconnecting() async {
+        let spy = TransportFactorySpy()
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.requestHandler = { _ in pairAckEnvelope() }; return t }
+        // maxReconnectAttempts high enough that the loop is still mid-flight
+        // (state == .reconnecting) when this test inspects `isConnected`,
+        // without racing a concurrent `disconnect()` call against the loop's
+        // own state writes.
+        let manager = makeManager(spy: spy, maxReconnectAttempts: 13)
+        await manager.start(token: "tok", host: "example.com")
+
+        spy.makeWT = { let t = ScriptedSignalingTransport(isWebTransport: true); t.connectError = TestError.generic; return t }
+        spy.makeWS = { let t = ScriptedSignalingTransport(isWebTransport: false); t.connectError = TestError.generic; return t }
+
+        let reconnectTask = Task { await manager.attemptReconnect() }
+        await waitUntil { manager.state == .reconnecting }
+        XCTAssertTrue(manager.isConnected, ".reconnecting still counts as connected — Disconnect must tear it down (D-13)")
+
+        _ = await reconnectTask.value // let the loop finish naturally (avoids racing disconnect() against it)
+        XCTAssertEqual(manager.state, .ended)
+    }
+
     func test_transportOnClosed_triggersReconnectLoop() async {
         let spy = TransportFactorySpy()
         var wtFake: ScriptedSignalingTransport?
