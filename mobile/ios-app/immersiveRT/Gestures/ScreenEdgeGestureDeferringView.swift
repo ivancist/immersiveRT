@@ -2,13 +2,22 @@ import SwiftUI
 import UIKit
 
 /// Defers the system's top-edge gesture recognizers (Control Center /
-/// Notification Center swipe) AND hides the status bar (time/battery/
-/// signal) while `isActive` is `true` — both are scoped to "is this
-/// session currently connected" (D-12's hidden corner-hold gesture is only
-/// reachable in that same window, so there is nothing to defer top-edge
-/// system gestures FOR otherwise, and the on-device request was explicit:
-/// full-screen chrome while connected, normal status bar on the Home
-/// screen and once the session ends/errors).
+/// Notification Center swipe) while `isActive` is `true` — scoped to "is
+/// this session currently connected", since D-12's hidden corner-hold
+/// gesture is only reachable in that same window and there is nothing to
+/// defer top-edge system gestures FOR otherwise.
+///
+/// NOTE: this view previously also tried to hide the status bar via
+/// `prefersStatusBarHidden` on the SAME child controller, on the assumption
+/// that SwiftUI's `WindowGroup` hosting forwards that query exactly like it
+/// forwards `preferredScreenEdgesDeferringSystemGestures`. On-device
+/// verification showed that assumption was wrong — the status bar stayed
+/// visible. Status-bar hiding now uses SwiftUI's native, directly-supported
+/// `.statusBar(hidden:)` view modifier instead (`ActiveSessionView.swift`),
+/// which does not depend on this child-controller-forwarding mechanism at
+/// all. Keeping this type single-purpose (edge-gesture deferral only)
+/// avoids re-coupling two mechanisms that turned out to have different
+/// reliability characteristics.
 ///
 /// Originally fixed an on-device bug report: "If I put my fingers at the
 /// corner of the phone, where there is the system bar, it doesn't work."
@@ -50,8 +59,8 @@ import UIKit
 /// behavior (e.g. the Home indicator) is governed separately by
 /// `prefersHomeIndicatorAutoHidden` and is unaffected by this property.
 struct ScreenEdgeGestureDeferringView: UIViewControllerRepresentable {
-    /// Whether the connected-session chrome (deferred top edge + hidden
-    /// status bar) should be in effect right now.
+    /// Whether the connected-session top-edge defer should be in effect
+    /// right now.
     var isActive: Bool
 
     func makeUIViewController(context: Context) -> DeferringViewController {
@@ -65,28 +74,19 @@ struct ScreenEdgeGestureDeferringView: UIViewControllerRepresentable {
     }
 
     /// Zero-size, non-interactive child view controller whose only purpose
-    /// is to override `preferredScreenEdgesDeferringSystemGestures` and
-    /// `prefersStatusBarHidden`, and be present in the on-screen SwiftUI
-    /// content tree so those overrides are consulted (see type-level doc
-    /// comment for the propagation mechanism).
+    /// is to override `preferredScreenEdgesDeferringSystemGestures`, and be
+    /// present in the on-screen SwiftUI content tree so that override is
+    /// consulted (see type-level doc comment for the propagation mechanism).
     final class DeferringViewController: UIViewController {
         var isActive: Bool = false {
             didSet {
                 guard isActive != oldValue else { return }
                 setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
-                // Mirrors `CustomHostingView.isStatusBarHidden`'s
-                // `setNeedsStatusBarAppearanceUpdate()` call pattern for the
-                // sibling "preferred X" property in this same codebase.
-                setNeedsStatusBarAppearanceUpdate()
             }
         }
 
         override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
             isActive ? .top : []
-        }
-
-        override var prefersStatusBarHidden: Bool {
-            isActive
         }
 
         override func viewDidLoad() {

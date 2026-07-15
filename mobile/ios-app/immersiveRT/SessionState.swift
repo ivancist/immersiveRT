@@ -88,3 +88,31 @@ extension SessionState {
         }
     }
 }
+
+extension SessionState {
+    /// D-13 (connected case): true while there is a live/in-progress
+    /// session — drives whether the connected-session chrome (hidden
+    /// corner-hold reveal, full-screen status bar) is in effect, and
+    /// whether the Plan 08 overlay-menu Disconnect action (vs. the plain
+    /// Back button) is reachable (`ActiveSessionView.swift`).
+    ///
+    /// Deliberately computed from THIS reduced, synchronously-updated
+    /// state rather than forwarded from `TransportManager.isConnected`
+    /// (which reads the transport's own internal state): `sessionState` is
+    /// reset to `.connecting` synchronously at the very top of
+    /// `SessionViewModel.start(token:host:)`, before any `await` — but
+    /// `TransportManager.start(token:host:)` (which resets ITS OWN `state`)
+    /// only runs after an earlier `await` completes. Forwarding to the
+    /// transport's state left a real window, at the start of every new
+    /// session, where the UI could still read the PREVIOUS session's
+    /// terminal state (e.g. the stale "Back" button flashing before the
+    /// new session's `.connecting` phase took hold on the wire). Basing
+    /// this on `sessionState` instead closes that gap — both are updated
+    /// in the same synchronous call.
+    var isConnected: Bool {
+        switch self {
+        case .connecting, .paired, .active, .reconnecting: return true
+        case .error, .ended: return false
+        }
+    }
+}

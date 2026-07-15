@@ -29,10 +29,14 @@ final class SessionViewModel: ObservableObject {
     var roomCode: String? { transportManager.roomCode }
     var username: String? { transportManager.myUsername }
 
-    /// D-13 branch: `true` while `transportManager` has an active or
-    /// in-progress session — the overlay menu's Disconnect/Back button
-    /// reads this to decide between `disconnect()` and `onExit` (Plan 08).
-    var isConnected: Bool { transportManager.isConnected }
+    /// D-13 branch: `true` while there's an active or in-progress session —
+    /// gates the hidden corner-hold menu, full-screen chrome, and the
+    /// plain Back button (Plan 08). Computed from `sessionState`, NOT
+    /// forwarded to `transportManager.isConnected` — see
+    /// `SessionState.isConnected`'s doc comment for why forwarding to the
+    /// transport's own state left a stale-UI race at the start of every
+    /// new session.
+    var isConnected: Bool { sessionState.isConnected }
 
     private let transportManager: TransportManager
     private var pollTimer: Timer?
@@ -402,17 +406,15 @@ struct ActiveSessionView: View {
                     // below) — a plain, directly-tappable Back button
                     // replaces it. Accident-resistance (D-12) only protects
                     // an ACTIVE session; a terminal screen has nothing left
-                    // to protect against.
+                    // to protect against. Styled as plain blue text (not a
+                    // filled/bordered button) per on-device UX feedback —
+                    // still a real `Button` (tappable, accessible), just
+                    // without button chrome.
                     if !viewModel.isConnected {
-                        Button {
-                            onExit()
-                        } label: {
-                            Label("Back", systemImage: "chevron.left")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .padding(.horizontal, 40)
-                        .accessibilityIdentifier("session-ended-back-button")
+                        Button("Back", action: onExit)
+                            .buttonStyle(.plain)
+                            .foregroundColor(.blue)
+                            .accessibilityIdentifier("session-ended-back-button")
                     }
 
                     Spacer()
@@ -488,6 +490,15 @@ struct ActiveSessionView: View {
         // `CornerLongPressRecognizer`'s already-full-screen window-bounds
         // hit-test geometry.
         .ignoresSafeArea()
+        // Full-screen chrome while connected (time/battery/signal hidden),
+        // normal status bar on Home and once the session ends/errors.
+        // Uses SwiftUI's native, directly-supported modifier rather than
+        // `ScreenEdgeGestureDeferringView`'s child-controller-forwarding
+        // trick — that trick's on-device behavior turned out to differ
+        // between `preferredScreenEdgesDeferringSystemGestures` (works) and
+        // `prefersStatusBarHidden` (did not), so status-bar hiding no
+        // longer depends on it at all.
+        .statusBar(hidden: viewModel.isConnected)
     }
 
     private var statusText: String {
