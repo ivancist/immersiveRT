@@ -284,6 +284,31 @@ struct ActiveSessionView: View {
     @State private var isMenuRevealed = false
 
     var body: some View {
+        // Refinement (on-device request: "move the two finger long touch in
+        // the real corners of the smartphone, where now there are time and
+        // ISP [status bar clock/signal icons]"): investigation found
+        // `CornerLongPressRecognizer`'s pure hit-test (`corner(for:in:)`,
+        // 25%/30% of `view.bounds`) is ALREADY correct at the geometry
+        // level — its `view` is the enclosing `UIWindow` (attached via
+        // `window.addGestureRecognizer(_:)` in `CornerLongPressOverlay`),
+        // and `UIWindow.bounds` is always the FULL physical screen size;
+        // `safeAreaInsets` is a separate property that does not shrink
+        // `.bounds`. So the corner-hold recognizer's band already reaches
+        // the true screen edges, including under the status bar icons.
+        //
+        // The actual gap was one level up: this `GeometryReader` (and
+        // therefore `TouchCaptureView`'s full-screen single-finger capture
+        // surface, D-04, plus everything else rendered below) was sized to
+        // `geometry.size` WITHOUT ignoring the safe area — i.e. the app's
+        // own visible/interactive content was inset from the true screen
+        // edges by the safe-area amount, leaving a dead strip near the
+        // status bar where neither the touch-capture surface nor any
+        // visible content reached, even though the hidden corner gesture's
+        // OWN hit-test geometrically already covered it. `.ignoresSafeArea()`
+        // below expands this view (and the `geometry.size` it reports) to
+        // the full screen, so the touch-capture surface and the corner-hold
+        // region are now consistent with each other and both reach the true
+        // physical corners.
         GeometryReader { geometry in
             ZStack {
                 // Full-screen raw UIKit touch capture (D-04) — see
@@ -413,6 +438,13 @@ struct ActiveSessionView: View {
             // fixed timeout while the session remains blocked.
             .dynamicIslandToast(isPresented: $viewModel.isToastPresented, value: viewModel.currentToast)
         }
+        // See the `body` entry doc comment above (Refinement: corner region
+        // reaching the true physical corners) — expands this GeometryReader
+        // (and the `geometry.size` it reports to `TouchCaptureView` and
+        // everything else below) to the full screen, matching
+        // `CornerLongPressRecognizer`'s already-full-screen window-bounds
+        // hit-test geometry.
+        .ignoresSafeArea()
     }
 
     private var statusText: String {
