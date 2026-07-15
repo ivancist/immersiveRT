@@ -263,6 +263,35 @@ struct ActiveSessionView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
+                // Full-screen raw UIKit touch capture (D-04) — see
+                // `TouchCaptureView`'s doc comment for why this replaced a
+                // SwiftUI `DragGesture` (on-device bug: touch signal could
+                // get stuck "active" after a rapid double-tap). Placed as
+                // the bottom-most ZStack layer so it observes touches
+                // everywhere on screen while `overlayMenu`'s real SwiftUI
+                // Buttons (added later/higher in this ZStack) still win
+                // hit-testing over it when tapped, exactly as they did over
+                // the previous `.gesture(DragGesture(...))` attached to
+                // this same outer container.
+                TouchCaptureView { active, location in
+                    touchActive = active
+                    if active {
+                        touchLocation = location
+                    }
+                    let normalized = normalizedTouch(location: location, in: geometry.frame(in: .local))
+                    viewModel.updateTouchState(active: active, x: normalized.x, y: normalized.y)
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+
+                // Bug fix: lets touches at the true physical top corners
+                // (where iOS reserves a Control Center/Notification Center
+                // system-gesture band) reach `CornerLongPressRecognizer`
+                // instead of being intercepted by the system first. See
+                // `ScreenEdgeGestureDeferringView`'s doc comment for the
+                // full mechanism/verification.
+                ScreenEdgeGestureDeferringView()
+                    .frame(width: 0, height: 0)
+
                 VStack(spacing: 20) {
                     Spacer()
 
@@ -309,7 +338,7 @@ struct ActiveSessionView: View {
 
                 // Local visual feedback (D-06) — a small dot at the current
                 // touch point, shown only while a finger is down. Ignores
-                // hit testing so it never intercepts the gesture below.
+                // hit testing so it never intercepts `TouchCaptureView`.
                 if touchActive {
                     Circle()
                         .fill(Color.white.opacity(0.35))
@@ -322,9 +351,9 @@ struct ActiveSessionView: View {
                 // D-12: hidden reveal — a ZStack SIBLING of the full-screen
                 // touch-capture surface above, attaching its recognizer to
                 // the enclosing UIWindow (Plan 07) so it observes every
-                // touch without ever winning hit-testing over the drag
-                // gesture below. `isMenuRevealed` is the ONLY state this
-                // sets; nothing else in this view ever surfaces the menu.
+                // touch without ever winning hit-testing over
+                // `TouchCaptureView`. `isMenuRevealed` is the ONLY state
+                // this sets; nothing else in this view ever surfaces the menu.
                 CornerLongPressOverlay(onReveal: { isMenuRevealed = true })
 
                 // D-11/D-12/D-13: the hidden overlay menu itself — only
@@ -337,25 +366,6 @@ struct ActiveSessionView: View {
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
-            // Entire screen is the capture surface (D-04) — a plain
-            // `contentShape` over the full `ZStack` ensures the drag gesture
-            // recognizes touches even over transparent/background regions,
-            // not just the VStack's laid-out content.
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        touchActive = true
-                        touchLocation = value.location
-                        let normalized = normalizedTouch(location: value.location, in: geometry.frame(in: .local))
-                        viewModel.updateTouchState(active: true, x: normalized.x, y: normalized.y)
-                    }
-                    .onEnded { value in
-                        touchActive = false
-                        let normalized = normalizedTouch(location: value.location, in: geometry.frame(in: .local))
-                        viewModel.updateTouchState(active: false, x: normalized.x, y: normalized.y)
-                    }
-            )
             // D-09 (start-blocked) / D-08 (tracking-limited) local feedback,
             // all routed through the existing DynamicToast component (D-15).
             // No auto-dismiss duration (unlike ContentView's `.invalidQRCode`
