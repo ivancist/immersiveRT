@@ -121,6 +121,20 @@ final class TransportManager {
     /// purely a data update, not a structural one.
     private var touchState: (active: Bool, x: Double, y: Double) = (false, 0, 0)
 
+    /// Continuous touch-state write (Plan 04, SENS-06, D-03) — called (via
+    /// `SessionViewModel`) from `ActiveSessionView`'s full-screen
+    /// `DragGesture(minimumDistance: 0)` on every `.onChanged`/`.onEnded`
+    /// event. This is a state write, not a send trigger: `handlePose(_:)`
+    /// already reads `touchState` on every ARKit-driven tick (60Hz), so
+    /// touch updates ride along on the next pose sample rather than
+    /// triggering an out-of-band send — mirrors `phone.ts`'s
+    /// `currentTouch`/`onTouchStart`/`onTouchMove`/`onTouchEnd` module-scope
+    /// state, which is likewise only read from inside the per-frame send
+    /// loop, never sent directly from the touch handlers themselves.
+    func updateTouchState(active: Bool, x: Double, y: Double) {
+        touchState = (active: active, x: x, y: y)
+    }
+
     init(
         myId: String = UUID().uuidString,
         makeWebTransport: @escaping (String, String) -> SignalingTransport = { host, myId in
