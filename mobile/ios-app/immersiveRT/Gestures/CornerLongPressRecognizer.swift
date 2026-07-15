@@ -25,50 +25,50 @@ final class CornerLongPressRecognizer: UIGestureRecognizer {
 
     // MARK: - Pure hit-test geometry (Task 1)
 
-    /// Fraction of `bounds.height`, measured from the top edge, that counts
-    /// as "top" for corner classification.
-    static let cornerHeightFraction: CGFloat = 0.25
-
     /// Fraction of `bounds.width`, measured from each side edge, that counts
     /// as the left/right corner band.
     static let cornerWidthFraction: CGFloat = 0.3
 
+    /// Floor for `topInset` on devices that somehow report a zero/near-zero
+    /// safe-area top inset — keeps the band usable rather than vanishing.
+    static let minimumTopInset: CGFloat = 20
+
     /// Classifies `point` as `.topLeft`, `.topRight`, or `nil` (no corner),
-    /// given the landscape-locked `bounds` of the touch-capture view.
+    /// given the landscape-locked `bounds` of the touch-capture view and the
+    /// height of the top band to treat as "corner zone".
     ///
-    /// Pure function — bounds + point in, enum out. No `UITouch`/runtime
-    /// dependency, so this is unit-testable with no Simulator touch
-    /// injection required (`CornerGestureRegionTests`).
+    /// Pure function — bounds + point + topInset in, enum out. No
+    /// `UITouch`/runtime dependency, so this is unit-testable with no
+    /// Simulator touch injection required (`CornerGestureRegionTests`).
     ///
-    /// The top band is `[bounds.minY, bounds.minY + cornerHeightFraction *
-    /// height)`; the left band is `[bounds.minX, bounds.minX +
-    /// cornerWidthFraction * width)`; the right band is
-    /// `(bounds.maxX - cornerWidthFraction * width, bounds.maxX]`. A point
-    /// must fall within the top band AND one of the side bands to classify
-    /// as a corner.
+    /// The top band is `[bounds.minY, bounds.minY + topInset)`; the left
+    /// band is `[bounds.minX, bounds.minX + cornerWidthFraction * width)`;
+    /// the right band is `(bounds.maxX - cornerWidthFraction * width,
+    /// bounds.maxX]`. A point must fall within the top band AND one of the
+    /// side bands to classify as a corner.
     ///
-    /// INVESTIGATION (on-device request: "move the two finger long touch in
-    /// the real corners of the smartphone, where now there are time and
-    /// ISP [status bar icons]"): the `bounds` passed in at every call site
-    /// below is `view.bounds`, where `view` is the `UIWindow` this
-    /// recognizer is attached to (`CornerLongPressOverlay` adds it via
-    /// `window.addGestureRecognizer(_:)`) — `UIWindow.bounds` is always the
-    /// FULL physical screen size; `safeAreaInsets` is a separate property
-    /// that does not shrink `.bounds`. So this hit-test band already
-    /// geometrically reaches the true screen edges (including under the
-    /// status bar icons) regardless of any SwiftUI safe-area layout — no
-    /// constant here needed to change. The actual gap was that
-    /// `ActiveSessionView`'s visible/interactive content (its `GeometryReader`
-    /// + full-screen `TouchCaptureView`) was laid out WITHOUT ignoring the
-    /// safe area, leaving a dead strip near the status bar where neither the
-    /// touch-capture surface nor any content reached — fixed by adding
-    /// `.ignoresSafeArea()` to `ActiveSessionView.body`'s `GeometryReader` so
-    /// its visible surface now matches this recognizer's already-full-screen
-    /// geometry.
-    static func corner(for point: CGPoint, in bounds: CGRect) -> Corner? {
+    /// NARROWED HEIGHT BAND (on-device request, round 2: "isolate the
+    /// [corner-hold] detection ONLY for the highest zone, from dynamic
+    /// island (or notch) to the top"): previously a flat 25%-of-height
+    /// fraction, which on a ~850pt-tall screen carved out a ~210pt band —
+    /// much taller than the actual notch/Dynamic Island (`safeAreaInsets.top`
+    /// is ~44-59pt), so it very plausibly overlapped normal single-finger
+    /// control touches near the top of the screen and made the two touch
+    /// surfaces (this reveal gesture vs. `TouchCaptureView`'s control
+    /// signal) compete for the same real estate. `topInset` is now the
+    /// caller-supplied `view.safeAreaInsets.top` (see call sites below) —
+    /// the exact system-reserved sliver around the notch/island — clamped
+    /// to `minimumTopInset` as a floor, so the corner-hold zone tracks the
+    /// actual per-device hardware cutout instead of an arbitrary fraction.
+    ///
+    /// `bounds` itself is still `view.bounds` where `view` is the `UIWindow`
+    /// this recognizer is attached to (`CornerLongPressOverlay` adds it via
+    /// `window.addGestureRecognizer(_:)`) — always the FULL physical screen
+    /// size, unaffected by safe-area layout.
+    static func corner(for point: CGPoint, in bounds: CGRect, topInset: CGFloat) -> Corner? {
         guard bounds.width > 0, bounds.height > 0 else { return nil }
 
-        let cornerHeight = bounds.height * cornerHeightFraction
+        let cornerHeight = max(topInset, minimumTopInset)
         let cornerWidth = bounds.width * cornerWidthFraction
 
         guard point.y >= bounds.minY, point.y < bounds.minY + cornerHeight else {
@@ -114,10 +114,11 @@ final class CornerLongPressRecognizer: UIGestureRecognizer {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesBegan(touches, with: event)
         guard let view else { return }
+        let topInset = view.safeAreaInsets.top
 
         for touch in touches {
             let point = touch.location(in: view)
-            guard let corner = Self.corner(for: point, in: view.bounds) else { continue }
+            guard let corner = Self.corner(for: point, in: view.bounds, topInset: topInset) else { continue }
             guard !isOccupied(corner) else { continue }
             cornerTouches[ObjectIdentifier(touch)] = (touch, corner)
         }
@@ -128,12 +129,13 @@ final class CornerLongPressRecognizer: UIGestureRecognizer {
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesMoved(touches, with: event)
         guard let view else { return }
+        let topInset = view.safeAreaInsets.top
 
         for touch in touches {
             guard let entry = cornerTouches[ObjectIdentifier(touch)] else { continue }
             let point = touch.location(in: view)
 
-            if let stillCorner = Self.corner(for: point, in: view.bounds), stillCorner == entry.corner {
+            if let stillCorner = Self.corner(for: point, in: view.bounds, topInset: topInset), stillCorner == entry.corner {
                 continue
             }
 
