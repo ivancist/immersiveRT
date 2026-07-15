@@ -262,7 +262,7 @@ Plans:
 **Goal:** Swap the native iOS phone client's position source from CoreMotion dead-reckoning (the Phase 06.2 parity baseline) to ARKit `ARSession` world tracking for precise 6DOF position, keeping orientation semantics compatible with the existing desktop decode/SLERP pipeline (Phase 6) and SDK naming (Phase 7 — `deadReckoningPosition`/`driftConfidence`). This is the native-companion-app escape hatch Phase 06.1 explicitly anticipated for iOS (Safari has no WebXR `immersive-ar`), invoked now instead of the planned web-based VIO/SLAM research spike. Includes a mandatory on-device ARKit tracking-precision verification checkpoint that is a go/no-go gate for the project, mirroring Phase 06.1's Wave 3 on-device checkpoint pattern.
 **Requirements**: SENS-V2-03, SDK-05 (reused from Phase 06.1); SENS-06 (native-parity for the already-Complete Phase 5 web touch-capture requirement — no distinct new requirement ID, per CONTEXT.md/RESEARCH.md)
 **Depends on:** Phase 06.2 (native transport parity must land first); references Phase 06.1's WebXR pose-tracking conventions (webxr.ts, phone.ts D-02/D-03/D-05/D-06) as a native-porting guide
-**Plans:** 7/8 plans executed
+**Plans:** 8/8 plans complete
 
 Plans:
 
@@ -293,7 +293,7 @@ Plans:
 
 **Wave 7** *(blocked on 06.3-05/06/07)*
 
-- [ ] 06.3-08-PLAN.md — Hidden overlay menu: recenter + disconnect/back (D-11/D-12/D-13)
+- [x] 06.3-08-PLAN.md — Hidden overlay menu: recenter + disconnect/back (D-11/D-12/D-13)
 
 *Note (traceability): SENS-06 is covered by touch-capture Plan 06.3-04 as native-client parity for the existing Complete SENS-06 (Phase 5) entry; REQUIREMENTS.md traceability may either add a "SENS-06 (native parity)" row for Phase 06.3 or leave it implicitly covered by the existing SENS-06/Phase 5 entry — developer's choice.*
 
