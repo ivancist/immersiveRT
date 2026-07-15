@@ -5,9 +5,15 @@ struct Toast {
     var symbol: String
     var symbolFont: Font
     var symbolForegroundStyle: (Color,Color)
-    
+
     var title: String
     var message: String
+
+    /// Auto-dismiss duration for this toast, in seconds — `nil` (the
+    /// default) means it stays until explicitly dismissed. Only
+    /// `.recentered` sets this; D-08/D-09 toasts must persist until their
+    /// blocking condition resolves or the user swipes them away.
+    var duration: TimeInterval? = nil
     
     static var example1: Toast {
         Toast(symbol: "checkmark.seal.fill",
@@ -72,6 +78,7 @@ struct Toast {
               symbolFont: .system(size: 26),
               symbolForegroundStyle: (.white, .blue),
               title: "Recentered",
-              message: "Your position has been re-zeroed")
+              message: "Your position has been re-zeroed",
+              duration: 1.5)
     }
 }

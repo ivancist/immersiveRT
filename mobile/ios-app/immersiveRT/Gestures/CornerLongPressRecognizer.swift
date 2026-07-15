@@ -233,6 +233,18 @@ struct CornerLongPressOverlay: UIViewRepresentable {
         context.coordinator.attach(to: uiView, holdDuration: holdDuration)
     }
 
+    /// Removes the recognizer from its window when this view is torn down
+    /// (e.g. `ActiveSessionView` gates mounting this overlay on D-13's
+    /// `isConnected`, so it now unmounts on every disconnect) — without
+    /// this, the recognizer would stay attached to the window indefinitely,
+    /// a harmless-but-leaked object (its `onReveal` closure captures the
+    /// coordinator `weak`, so it goes inert on deinit — but there's no
+    /// reason to keep the leak now that unmounting is a normal, frequent
+    /// transition rather than an app-lifetime-rare event).
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(onReveal: onReveal)
     }
@@ -269,6 +281,18 @@ struct CornerLongPressOverlay: UIViewRepresentable {
                 self.recognizer = recognizer
                 self.attachedWindow = window
             }
+        }
+
+        /// Removes the recognizer from its window immediately (see
+        /// `dismantleUIView` above) — synchronous, unlike `attach`, since
+        /// there is no need to wait for a window to become available on
+        /// teardown.
+        func detach() {
+            if let recognizer, let attachedWindow {
+                attachedWindow.removeGestureRecognizer(recognizer)
+            }
+            recognizer = nil
+            attachedWindow = nil
         }
     }
 }

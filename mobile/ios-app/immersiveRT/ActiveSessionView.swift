@@ -345,13 +345,15 @@ struct ActiveSessionView: View {
                 // nothing and removes an entire class of residual risk.
                 .id("touch-capture-surface")
 
-                // Bug fix: lets touches at the true physical top corners
-                // (where iOS reserves a Control Center/Notification Center
-                // system-gesture band) reach `CornerLongPressRecognizer`
-                // instead of being intercepted by the system first. See
-                // `ScreenEdgeGestureDeferringView`'s doc comment for the
-                // full mechanism/verification.
-                ScreenEdgeGestureDeferringView()
+                // Lets touches at the true physical top corners (where iOS
+                // reserves a Control Center/Notification Center
+                // system-gesture band) reach `CornerLongPressRecognizer`,
+                // and hides the status bar — both scoped to `isConnected`
+                // (full-screen chrome only while there's a live/in-progress
+                // session; normal status bar + system gestures once
+                // disconnected/errored). See `ScreenEdgeGestureDeferringView`'s
+                // doc comment for the full mechanism.
+                ScreenEdgeGestureDeferringView(isActive: viewModel.isConnected)
                     .frame(width: 0, height: 0)
 
                 VStack(spacing: 20) {
@@ -394,6 +396,25 @@ struct ActiveSessionView: View {
                             .accessibilityIdentifier("pair-error-body")
                     }
 
+                    // D-13 (disconnected case): once there's no live/
+                    // in-progress session, the hidden corner-hold reveal is
+                    // no longer mounted at all (see `CornerLongPressOverlay`
+                    // below) — a plain, directly-tappable Back button
+                    // replaces it. Accident-resistance (D-12) only protects
+                    // an ACTIVE session; a terminal screen has nothing left
+                    // to protect against.
+                    if !viewModel.isConnected {
+                        Button {
+                            onExit()
+                        } label: {
+                            Label("Back", systemImage: "chevron.left")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.horizontal, 40)
+                        .accessibilityIdentifier("session-ended-back-button")
+                    }
+
                     Spacer()
                 }
                 .padding()
@@ -410,13 +431,21 @@ struct ActiveSessionView: View {
                         .accessibilityIdentifier("touch-feedback-indicator")
                 }
 
-                // D-12: hidden reveal — a ZStack SIBLING of the full-screen
-                // touch-capture surface above, attaching its recognizer to
-                // the enclosing UIWindow (Plan 07) so it observes every
-                // touch without ever winning hit-testing over
-                // `TouchCaptureView`. `isMenuRevealed` is the ONLY state
-                // this sets; nothing else in this view ever surfaces the menu.
-                CornerLongPressOverlay(onReveal: { isMenuRevealed = true })
+                // D-12/D-13: hidden reveal — a ZStack SIBLING of the
+                // full-screen touch-capture surface above, attaching its
+                // recognizer to the enclosing UIWindow (Plan 07) so it
+                // observes every touch without ever winning hit-testing
+                // over `TouchCaptureView`. `isMenuRevealed` is the ONLY
+                // state this sets; nothing else in this view ever surfaces
+                // the menu. Only mounted while `isConnected` — there is
+                // nothing left to Recenter/Disconnect once the session has
+                // ended/errored (the plain Back button above covers that
+                // case instead), and `CornerLongPressOverlay.dismantleUIView`
+                // detaches its window gesture recognizer whenever this
+                // condition flips to `false`.
+                if viewModel.isConnected {
+                    CornerLongPressOverlay(onReveal: { isMenuRevealed = true })
+                }
 
                 // D-11/D-12/D-13: the hidden overlay menu itself — only
                 // ever mounted while `isMenuRevealed` is true (toggled
@@ -430,13 +459,27 @@ struct ActiveSessionView: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
             // D-09 (start-blocked) / D-08 (tracking-limited) local feedback,
             // all routed through the existing DynamicToast component (D-15).
-            // No auto-dismiss duration (unlike ContentView's `.invalidQRCode`
-            // usage): D-08 dismissal is driven explicitly by
+            // `duration` comes from the toast itself (`Toast.duration`):
+            // `nil` for D-08/D-09 (D-08 dismissal is driven explicitly by
             // `handleTrackingLimitedMessage(_:)` on recovery, and a D-09
-            // block should stay visible (swipe-to-dismiss, per `ToastView`'s
-            // existing drag gesture) rather than silently vanish after a
-            // fixed timeout while the session remains blocked.
-            .dynamicIslandToast(isPresented: $viewModel.isToastPresented, value: viewModel.currentToast)
+            // block should stay visible — swipe-to-dismiss, per `ToastView`'s
+            // existing drag gesture — rather than silently vanish while the
+            // session remains blocked); a short auto-dismiss for D-11's
+            // `.recentered` confirmation, which has nothing left to do once
+            // shown.
+            .dynamicIslandToast(
+                isPresented: $viewModel.isToastPresented,
+                duration: viewModel.currentToast.duration,
+                value: viewModel.currentToast
+            )
+        }
+        .onChange(of: viewModel.isConnected) { _, isConnected in
+            // Dismiss a stale hidden menu if the session disconnects while
+            // it's open — `CornerLongPressOverlay` unmounts in the same
+            // frame, so nothing could reveal it again until reconnected.
+            if !isConnected {
+                isMenuRevealed = false
+            }
         }
         // See the `body` entry doc comment above (Refinement: corner region
         // reaching the true physical corners) — expands this GeometryReader
@@ -479,13 +522,19 @@ struct ActiveSessionView: View {
 
     // MARK: - Hidden overlay menu (D-11/D-12/D-13, Plan 08)
 
-    /// The reveal-gated menu card: Recenter (D-11) + Disconnect/Back (D-13).
+    /// The reveal-gated menu card: Recenter (D-11) + Disconnect (D-13).
     /// Includes a nearly-transparent tap-outside-dismiss background layer
     /// UNDER the card so tapping away from the card dismisses it, plus an
     /// explicit "Close" affordance (per this plan's action: "the menu is
     /// dismissable (tap-outside or an explicit close)"). Neither dismiss
     /// path is the reveal gesture itself — D-12 only governs how the menu
     /// APPEARS, not how it is dismissed.
+    ///
+    /// Unconditionally shows both actions: `CornerLongPressOverlay` (the
+    /// only thing that reveals this menu) is now mounted only while
+    /// `viewModel.isConnected` is `true`, so this menu can no longer appear
+    /// in a disconnected/errored/ended state — the always-visible Back
+    /// button in the main body handles that case instead.
     private var overlayMenu: some View {
         ZStack {
             // Effectively invisible but still hit-testable (a fully
@@ -496,44 +545,22 @@ struct ActiveSessionView: View {
                 .onTapGesture { isMenuRevealed = false }
 
             VStack(spacing: 16) {
-                // Bug fix (on-device UX report: "don't know why recenter
-                // button is also showed when session ended... the only
-                // action doable is going back"): Recenter only makes sense
-                // while there is a live ARKit-driven stream to re-zero
-                // (D-11) — gated on `isConnected` exactly like the
-                // Disconnect/Back button already branches on it below.
-                // When disconnected/errored/ended, the menu shows ONLY
-                // Back — the reveal gesture itself is left unchanged (D-12
-                // only needs to protect against accidentally disrupting an
-                // ACTIVE session; a terminal screen has nothing left to
-                // protect, but keeping one consistent reveal mechanism for
-                // both cases is simpler and lower-risk than special-casing
-                // navigation for the disconnected state).
-                if viewModel.isConnected {
-                    Button {
-                        viewModel.recenter()
-                        isMenuRevealed = false
-                    } label: {
-                        Label("Recenter", systemImage: "location.viewfinder")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("overlay-menu-recenter")
-                }
-
                 Button {
-                    if viewModel.isConnected {
-                        viewModel.disconnect()
-                    } else {
-                        onExit()
-                    }
+                    viewModel.recenter()
                     isMenuRevealed = false
                 } label: {
-                    Label(
-                        viewModel.isConnected ? "Disconnect" : "Back",
-                        systemImage: viewModel.isConnected ? "xmark.circle" : "chevron.left"
-                    )
-                    .frame(maxWidth: .infinity)
+                    Label("Recenter", systemImage: "location.viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("overlay-menu-recenter")
+
+                Button {
+                    viewModel.disconnect()
+                    isMenuRevealed = false
+                } label: {
+                    Label("Disconnect", systemImage: "xmark.circle")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .tint(.red)
