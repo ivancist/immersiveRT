@@ -135,6 +135,20 @@ final class TransportManager {
         touchState = (active: active, x: x, y: y)
     }
 
+    /// Manual recenter (D-11): re-zeros ONLY this player's ARKit world
+    /// origin via `arPoseSource.recenter()` — `setWorldOrigin(relativeTransform:)`
+    /// under the hood, never a `.resetTracking` restart, so there is no
+    /// visible tracking blip. Invoked by the Plan 08 overlay-menu Recenter
+    /// button. This is a single-player, on-demand re-anchor — distinct
+    /// from, and additive to, the desktop's R-key `resetAllPlayerPositions()`
+    /// (which offsets ALL connected players' rendered positions via a
+    /// broadcast correction, not a local ARKit re-anchor). Implicitly
+    /// `@MainActor` (this project's `SWIFT_DEFAULT_ACTOR_ISOLATION`), like
+    /// every other method on this class.
+    func recenter() {
+        arPoseSource.recenter()
+    }
+
     init(
         myId: String = UUID().uuidString,
         makeWebTransport: @escaping (String, String) -> SignalingTransport = { host, myId in
