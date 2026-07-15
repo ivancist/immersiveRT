@@ -315,39 +315,20 @@ struct ActiveSessionView: View {
         // physical corners.
         GeometryReader { geometry in
             ZStack {
-                // Full-screen raw UIKit touch capture (D-04) — see
-                // `TouchCaptureView`'s doc comment for why this replaced a
-                // SwiftUI `DragGesture` (on-device bug: touch signal could
-                // get stuck "active" after a rapid double-tap). Placed as
-                // the bottom-most ZStack layer so it observes touches
-                // everywhere on screen while `overlayMenu`'s real SwiftUI
-                // Buttons (added later/higher in this ZStack) still win
-                // hit-testing over it when tapped, exactly as they did over
-                // the previous `.gesture(DragGesture(...))` attached to
-                // this same outer container.
+                // Full-screen single-finger touch signal (D-04) — attaches
+                // a `UIGestureRecognizer` to the window (see
+                // `TouchCaptureView`'s doc comment), exactly like
+                // `CornerLongPressOverlay` below, so it observes touches
+                // everywhere on screen without depending on this marker
+                // view's own position/size in the ZStack.
                 TouchCaptureView { active, location in
                     touchActive = active
                     if active {
                         touchLocation = location
                     }
-                    let normalized = normalizedTouch(location: location, in: geometry.frame(in: .local))
+                    let normalized = normalizedTouch(location: location, in: geometry.frame(in: .global))
                     viewModel.updateTouchState(active: active, x: normalized.x, y: normalized.y)
                 }
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                // Defense-in-depth for the Bug A regression fix
-                // (`TouchCaptureView`'s doc comment): an explicit, constant
-                // `.id(...)` pins this view's SwiftUI identity so it is
-                // NEVER torn down/recreated by body re-evaluation (the
-                // 0.25s poll timer, `touchActive`/`isMenuRevealed` toggling,
-                // etc.) regardless of its position among the ZStack's
-                // conditional siblings — a torn-down `TrackingView` mid-touch
-                // would not reliably receive a terminating `touchesEnded`/
-                // `touchesCancelled`, which was the leading hypothesis this
-                // round for how the touch signal could get stuck. The actual
-                // confirmed root cause was `primaryTouch` being `weak`
-                // (fixed in `TouchCaptureView.swift`); this `.id(...)` costs
-                // nothing and removes an entire class of residual risk.
-                .id("touch-capture-surface")
 
                 // Lets touches at the true physical top corners (where iOS
                 // reserves a Control Center/Notification Center
