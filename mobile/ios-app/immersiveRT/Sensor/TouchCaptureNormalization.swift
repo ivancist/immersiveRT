@@ -21,8 +21,15 @@ import CoreGraphics
 /// wire-level `clamp01` — this is the first-line clamp, applied before the
 /// encoder's own defense-in-depth clamp01 + `safeFloat()`, per T-06.3-04).
 func normalizedTouch(location: CGPoint, in bounds: CGRect) -> (x: Double, y: Double) {
-    // RED stub (Task 1, TDD): intentionally wrong so
-    // TouchCaptureNormalizationTests fails before the real implementation
-    // lands in the GREEN commit.
-    return (99, 99)
+    guard bounds.width > 0, bounds.height > 0 else {
+        return (0, 0)
+    }
+
+    let rawX = (location.x - bounds.minX) / bounds.width
+    let rawY = (location.y - bounds.minY) / bounds.height
+
+    let clampedX = min(1, max(0, Double(rawX)))
+    let clampedY = min(1, max(0, Double(rawY)))
+
+    return (x: clampedX, y: clampedY)
 }
