@@ -34,7 +34,10 @@ struct ContentView: View {
     var body: some View {
         ZStack(alignment: .top) {
             if hasStartedSession {
-                ActiveSessionView(viewModel: sessionViewModel)
+                // D-13 (disconnected case): the overlay menu's Disconnect/
+                // Back button calls this when `sessionViewModel.isConnected`
+                // is false, returning to the initial `HomeView` screen.
+                ActiveSessionView(viewModel: sessionViewModel, onExit: { hasStartedSession = false })
             } else {
                 HomeView(onScanTapped: presentScannerIfCameraAvailable)
             }

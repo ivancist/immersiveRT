@@ -149,6 +149,48 @@ final class TransportManager {
         arPoseSource.recenter()
     }
 
+    /// D-13 (connected case): true while there is an active or in-progress
+    /// session (`.connecting`, `.paired`, `.reconnecting`) that the Plan 08
+    /// overlay-menu Disconnect/Back control should tear down via
+    /// `disconnect()`. `false` for `.idle`/`.error`/`.ended` — those are
+    /// "already disconnected/errored" per D-13, so the view should navigate
+    /// home (`onExit`) instead of calling `disconnect()` on a session that
+    /// has already ended or never held a live transport.
+    var isConnected: Bool {
+        switch state {
+        case .connecting, .paired, .reconnecting: return true
+        case .idle, .error, .ended: return false
+        }
+    }
+
+    /// Intentional teardown (D-13 connected case): stops the ARKit sensor
+    /// loop + heartbeat, closes the active transport, and clears
+    /// `reconnectToken` BEFORE closing so `handleTransportClosed`'s
+    /// resulting `attemptReconnect()` (guarded by `!isReconnecting`, so it
+    /// DOES still fire once here) sees `reconnectToken == nil` and ends
+    /// immediately rather than looping — mirrors `finishReconnectFailure()`'s
+    /// token-clearing shape for the same "must not auto-reconnect" reason.
+    /// Gated on `isConnected` so it is both idempotent (a second call once
+    /// already `.ended` is a no-op) and safe to call from `.reconnecting`
+    /// (actively tears down the in-flight reconnect loop) as well as
+    /// `.paired`; calling it from `.error`/`.idle`/`.ended` is likewise a
+    /// harmless no-op since `isConnected` is `false` there (D-13: those
+    /// states route the overlay-menu button to `onExit` instead). Invoked by
+    /// the Plan 08 overlay-menu Disconnect button.
+    func disconnect() {
+        guard isConnected else { return }
+        arPoseSource.stop()
+        heartbeatTimer.stop()
+        reconnectToken = nil
+        registered = false
+        peerFanOut.registered = false
+        let transport = activeTransport
+        activeTransport = nil
+        dispatcher.current = nil
+        state = .ended
+        transport?.close()
+    }
+
     /// Set by `SessionViewModel` to observe `ARPoseSource`'s D-08
     /// tracking-limited-reason messages for local DynamicToast presentation
     /// (Plan 06). `ARPoseSource` itself is a private implementation detail

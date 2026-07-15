@@ -29,6 +29,11 @@ final class SessionViewModel: ObservableObject {
     var roomCode: String? { transportManager.roomCode }
     var username: String? { transportManager.myUsername }
 
+    /// D-13 branch: `true` while `transportManager` has an active or
+    /// in-progress session — the overlay menu's Disconnect/Back button
+    /// reads this to decide between `disconnect()` and `onExit` (Plan 08).
+    var isConnected: Bool { transportManager.isConnected }
+
     private let transportManager: TransportManager
     private var pollTimer: Timer?
 
@@ -168,6 +173,23 @@ final class SessionViewModel: ObservableObject {
         transportManager.updateTouchState(active: active, x: x, y: y)
     }
 
+    /// D-11 (manual recenter), invoked by the Plan 08 overlay-menu Recenter
+    /// button: delegates to `transportManager.recenter()` and briefly
+    /// confirms via `Toast.recentered` (purely local UX; no wire effect).
+    func recenter() {
+        transportManager.recenter()
+        currentToast = .recentered
+        isToastPresented = true
+    }
+
+    /// D-13 (connected case), invoked by the Plan 08 overlay-menu
+    /// Disconnect button — only meaningful while `isConnected`; the view
+    /// is expected to branch to `onExit` instead when `isConnected` is
+    /// `false` (already disconnected/errored).
+    func disconnect() {
+        transportManager.disconnect()
+    }
+
     /// "Streaming" mirrors `TransportManager.registered` — the CoreMotion
     /// loop + heartbeat are already running once paired (not gated on a
     /// data channel being open), so the Wake Lock equivalent should be too.
@@ -216,6 +238,12 @@ final class SessionViewModel: ObservableObject {
 struct ActiveSessionView: View {
     @ObservedObject var viewModel: SessionViewModel
 
+    /// D-13 (disconnected case): navigates back to the initial `HomeView`
+    /// screen — called from the overlay menu's Disconnect/Back button when
+    /// `viewModel.isConnected` is `false` (already disconnected/errored).
+    /// Supplied by `ContentView`, which resets `hasStartedSession`.
+    var onExit: () -> Void
+
     /// Drives the local visual feedback overlay (D-06) — `true` for the
     /// full duration a finger is down anywhere on the view, `false` the
     /// instant it lifts. Kept as plain `@State` (not routed through
@@ -224,6 +252,13 @@ struct ActiveSessionView: View {
     /// `viewModel.updateTouchState(active:x:y:)`.
     @State private var touchActive = false
     @State private var touchLocation: CGPoint = .zero
+
+    /// D-12: the ONLY thing that ever sets this to `true` is
+    /// `CornerLongPressOverlay.onReveal` firing (the hidden 2-finger
+    /// both-top-corners hold, Plan 07) — there is no always-visible
+    /// Recenter/Disconnect affordance anywhere else in this view, by
+    /// design, so the controls stay hard to trigger accidentally.
+    @State private var isMenuRevealed = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -282,6 +317,23 @@ struct ActiveSessionView: View {
                         .position(touchLocation)
                         .allowsHitTesting(false)
                         .accessibilityIdentifier("touch-feedback-indicator")
+                }
+
+                // D-12: hidden reveal — a ZStack SIBLING of the full-screen
+                // touch-capture surface above, attaching its recognizer to
+                // the enclosing UIWindow (Plan 07) so it observes every
+                // touch without ever winning hit-testing over the drag
+                // gesture below. `isMenuRevealed` is the ONLY state this
+                // sets; nothing else in this view ever surfaces the menu.
+                CornerLongPressOverlay(onReveal: { isMenuRevealed = true })
+
+                // D-11/D-12/D-13: the hidden overlay menu itself — only
+                // ever mounted while `isMenuRevealed` is true (toggled
+                // exclusively by the reveal gesture above), so there is no
+                // always-visible Recenter/Disconnect affordance (D-12).
+                if isMenuRevealed {
+                    overlayMenu
+                        .transition(.opacity)
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
@@ -343,6 +395,64 @@ struct ActiveSessionView: View {
         case .reconnecting: return "arrow.triangle.2.circlepath"
         case .error: return "exclamationmark.triangle.fill"
         case .ended: return "xmark.circle.fill"
+        }
+    }
+
+    // MARK: - Hidden overlay menu (D-11/D-12/D-13, Plan 08)
+
+    /// The reveal-gated menu card: Recenter (D-11) + Disconnect/Back (D-13).
+    /// Includes a nearly-transparent tap-outside-dismiss background layer
+    /// UNDER the card so tapping away from the card dismisses it, plus an
+    /// explicit "Close" affordance (per this plan's action: "the menu is
+    /// dismissable (tap-outside or an explicit close)"). Neither dismiss
+    /// path is the reveal gesture itself — D-12 only governs how the menu
+    /// APPEARS, not how it is dismissed.
+    private var overlayMenu: some View {
+        ZStack {
+            // Effectively invisible but still hit-testable (a fully
+            // `.clear` SwiftUI `Color` does not receive taps) — tapping
+            // anywhere outside the card dismisses the menu.
+            Color.black.opacity(0.001)
+                .ignoresSafeArea()
+                .onTapGesture { isMenuRevealed = false }
+
+            VStack(spacing: 16) {
+                Button {
+                    viewModel.recenter()
+                    isMenuRevealed = false
+                } label: {
+                    Label("Recenter", systemImage: "location.viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("overlay-menu-recenter")
+
+                Button {
+                    if viewModel.isConnected {
+                        viewModel.disconnect()
+                    } else {
+                        onExit()
+                    }
+                    isMenuRevealed = false
+                } label: {
+                    Label(
+                        viewModel.isConnected ? "Disconnect" : "Back",
+                        systemImage: viewModel.isConnected ? "xmark.circle" : "chevron.left"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+                .accessibilityIdentifier("overlay-menu-disconnect-or-back")
+
+                Button("Close") { isMenuRevealed = false }
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            .padding(20)
+            .frame(maxWidth: 260)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityIdentifier("hidden-overlay-menu")
         }
     }
 }
