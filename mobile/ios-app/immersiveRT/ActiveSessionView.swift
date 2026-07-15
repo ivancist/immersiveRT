@@ -65,7 +65,30 @@ final class SessionViewModel: ObservableObject {
     /// (consistent with D-18's no-silent-degrade rule) — there is no
     /// CoreMotion fallback path in this app at all (ARKit superseded it
     /// entirely, per `ARPoseSource`'s own doc comment).
+    ///
+    /// BUG FIX (on-device: after Disconnect/Back → Home → starting a NEW
+    /// session, the stale "Session Ended" text from the PREVIOUS session
+    /// briefly/indefinitely reappeared): `SessionViewModel` is a single
+    /// app-lifetime-shared instance (`immersiveRTApp` owns it, required for
+    /// scenePhase handling) — `sessionState` is a `@Published` property
+    /// initialized ONCE at construction, so it is never implicitly reset
+    /// between sessions. `pollTransportState()`'s `.connecting`/`.idle`
+    /// case is deliberately a no-op ("nothing to reduce yet — stays at the
+    /// default `.connecting`"), an assumption that only holds if
+    /// `sessionState` actually STARTS at `.connecting` for this session —
+    /// which is false for every session after the first, since a prior
+    /// session's terminal `.ended`/`.error` value otherwise survives
+    /// untouched until some future pairAck/pairError/channelOpen event
+    /// happens to overwrite it. Reset explicitly to a clean slate here,
+    /// before either the D-09 precondition check or `startPolling()`, so
+    /// every new session always begins from `.connecting` (matching this
+    /// property's own declared default) rather than whatever the previous
+    /// session left behind. `isToastPresented` is reset for the same
+    /// reason (a stale D-08/D-09 toast from the last session must not
+    /// carry over either).
     func start(token: String, host: String) {
+        sessionState = .connecting
+        isToastPresented = false
         Task {
             if let startupError = await ARPoseSource.checkARStartupPreconditions() {
                 presentStartupError(startupError)
@@ -261,6 +284,31 @@ struct ActiveSessionView: View {
     @State private var isMenuRevealed = false
 
     var body: some View {
+        // Refinement (on-device request: "move the two finger long touch in
+        // the real corners of the smartphone, where now there are time and
+        // ISP [status bar clock/signal icons]"): investigation found
+        // `CornerLongPressRecognizer`'s pure hit-test (`corner(for:in:)`,
+        // 25%/30% of `view.bounds`) is ALREADY correct at the geometry
+        // level — its `view` is the enclosing `UIWindow` (attached via
+        // `window.addGestureRecognizer(_:)` in `CornerLongPressOverlay`),
+        // and `UIWindow.bounds` is always the FULL physical screen size;
+        // `safeAreaInsets` is a separate property that does not shrink
+        // `.bounds`. So the corner-hold recognizer's band already reaches
+        // the true screen edges, including under the status bar icons.
+        //
+        // The actual gap was one level up: this `GeometryReader` (and
+        // therefore `TouchCaptureView`'s full-screen single-finger capture
+        // surface, D-04, plus everything else rendered below) was sized to
+        // `geometry.size` WITHOUT ignoring the safe area — i.e. the app's
+        // own visible/interactive content was inset from the true screen
+        // edges by the safe-area amount, leaving a dead strip near the
+        // status bar where neither the touch-capture surface nor any
+        // visible content reached, even though the hidden corner gesture's
+        // OWN hit-test geometrically already covered it. `.ignoresSafeArea()`
+        // below expands this view (and the `geometry.size` it reports) to
+        // the full screen, so the touch-capture surface and the corner-hold
+        // region are now consistent with each other and both reach the true
+        // physical corners.
         GeometryReader { geometry in
             ZStack {
                 // Full-screen raw UIKit touch capture (D-04) — see
@@ -282,6 +330,20 @@ struct ActiveSessionView: View {
                     viewModel.updateTouchState(active: active, x: normalized.x, y: normalized.y)
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height)
+                // Defense-in-depth for the Bug A regression fix
+                // (`TouchCaptureView`'s doc comment): an explicit, constant
+                // `.id(...)` pins this view's SwiftUI identity so it is
+                // NEVER torn down/recreated by body re-evaluation (the
+                // 0.25s poll timer, `touchActive`/`isMenuRevealed` toggling,
+                // etc.) regardless of its position among the ZStack's
+                // conditional siblings — a torn-down `TrackingView` mid-touch
+                // would not reliably receive a terminating `touchesEnded`/
+                // `touchesCancelled`, which was the leading hypothesis this
+                // round for how the touch signal could get stuck. The actual
+                // confirmed root cause was `primaryTouch` being `weak`
+                // (fixed in `TouchCaptureView.swift`); this `.id(...)` costs
+                // nothing and removes an entire class of residual risk.
+                .id("touch-capture-surface")
 
                 // Bug fix: lets touches at the true physical top corners
                 // (where iOS reserves a Control Center/Notification Center
@@ -376,6 +438,13 @@ struct ActiveSessionView: View {
             // fixed timeout while the session remains blocked.
             .dynamicIslandToast(isPresented: $viewModel.isToastPresented, value: viewModel.currentToast)
         }
+        // See the `body` entry doc comment above (Refinement: corner region
+        // reaching the true physical corners) — expands this GeometryReader
+        // (and the `geometry.size` it reports to `TouchCaptureView` and
+        // everything else below) to the full screen, matching
+        // `CornerLongPressRecognizer`'s already-full-screen window-bounds
+        // hit-test geometry.
+        .ignoresSafeArea()
     }
 
     private var statusText: String {
@@ -427,15 +496,30 @@ struct ActiveSessionView: View {
                 .onTapGesture { isMenuRevealed = false }
 
             VStack(spacing: 16) {
-                Button {
-                    viewModel.recenter()
-                    isMenuRevealed = false
-                } label: {
-                    Label("Recenter", systemImage: "location.viewfinder")
-                        .frame(maxWidth: .infinity)
+                // Bug fix (on-device UX report: "don't know why recenter
+                // button is also showed when session ended... the only
+                // action doable is going back"): Recenter only makes sense
+                // while there is a live ARKit-driven stream to re-zero
+                // (D-11) — gated on `isConnected` exactly like the
+                // Disconnect/Back button already branches on it below.
+                // When disconnected/errored/ended, the menu shows ONLY
+                // Back — the reveal gesture itself is left unchanged (D-12
+                // only needs to protect against accidentally disrupting an
+                // ACTIVE session; a terminal screen has nothing left to
+                // protect, but keeping one consistent reveal mechanism for
+                // both cases is simpler and lower-risk than special-casing
+                // navigation for the disconnected state).
+                if viewModel.isConnected {
+                    Button {
+                        viewModel.recenter()
+                        isMenuRevealed = false
+                    } label: {
+                        Label("Recenter", systemImage: "location.viewfinder")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("overlay-menu-recenter")
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("overlay-menu-recenter")
 
                 Button {
                     if viewModel.isConnected {

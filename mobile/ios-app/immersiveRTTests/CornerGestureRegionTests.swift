@@ -80,4 +80,37 @@ final class CornerGestureRegionTests: XCTestCase {
         let degenerate = CGRect(x: 0, y: 0, width: 0, height: 0)
         XCTAssertNil(CornerLongPressRecognizer.corner(for: CGPoint(x: 0, y: 0), in: degenerate))
     }
+
+    // MARK: - True physical corner coverage (Refinement D on-device request:
+    // "move the two finger long touch in the real corners... where now
+    // there are time and ISP [status bar icons]")
+    //
+    // `bounds` here always represents the recognizer's attached `UIWindow`'s
+    // `.bounds` at the real call sites (`CornerLongPressRecognizer.swift`'s
+    // `corner(for:in:)` doc comment) — the FULL physical screen, never
+    // reduced by safe-area insets. These cases assert points immediately
+    // adjacent to the literal corner pixel (well within where a status
+    // bar's clock/signal icons sit) still classify correctly, confirming
+    // the pure hit-test geometry itself was never the constraint; the fix
+    // was `ActiveSessionView` extending its visible/interactive surface to
+    // match via `.ignoresSafeArea()`.
+    func test_pointAdjacentToLiteralTopLeftCorner_classifiesAsTopLeft() {
+        let point = CGPoint(x: 1, y: 1)
+        XCTAssertEqual(CornerLongPressRecognizer.corner(for: point, in: bounds), .topLeft)
+    }
+
+    func test_pointAdjacentToLiteralTopRightCorner_classifiesAsTopRight() {
+        let point = CGPoint(x: 999, y: 1)
+        XCTAssertEqual(CornerLongPressRecognizer.corner(for: point, in: bounds), .topRight)
+    }
+
+    func test_pointAtExactTopLeftOrigin_classifiesAsTopLeft() {
+        let point = CGPoint(x: bounds.minX, y: bounds.minY)
+        XCTAssertEqual(CornerLongPressRecognizer.corner(for: point, in: bounds), .topLeft)
+    }
+
+    func test_pointAtExactTopRightOrigin_classifiesAsTopRight() {
+        let point = CGPoint(x: bounds.maxX, y: bounds.minY)
+        XCTAssertEqual(CornerLongPressRecognizer.corner(for: point, in: bounds), .topRight)
+    }
 }

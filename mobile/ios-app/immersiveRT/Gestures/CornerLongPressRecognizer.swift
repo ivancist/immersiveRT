@@ -46,6 +46,25 @@ final class CornerLongPressRecognizer: UIGestureRecognizer {
     /// `(bounds.maxX - cornerWidthFraction * width, bounds.maxX]`. A point
     /// must fall within the top band AND one of the side bands to classify
     /// as a corner.
+    ///
+    /// INVESTIGATION (on-device request: "move the two finger long touch in
+    /// the real corners of the smartphone, where now there are time and
+    /// ISP [status bar icons]"): the `bounds` passed in at every call site
+    /// below is `view.bounds`, where `view` is the `UIWindow` this
+    /// recognizer is attached to (`CornerLongPressOverlay` adds it via
+    /// `window.addGestureRecognizer(_:)`) — `UIWindow.bounds` is always the
+    /// FULL physical screen size; `safeAreaInsets` is a separate property
+    /// that does not shrink `.bounds`. So this hit-test band already
+    /// geometrically reaches the true screen edges (including under the
+    /// status bar icons) regardless of any SwiftUI safe-area layout — no
+    /// constant here needed to change. The actual gap was that
+    /// `ActiveSessionView`'s visible/interactive content (its `GeometryReader`
+    /// + full-screen `TouchCaptureView`) was laid out WITHOUT ignoring the
+    /// safe area, leaving a dead strip near the status bar where neither the
+    /// touch-capture surface nor any content reached — fixed by adding
+    /// `.ignoresSafeArea()` to `ActiveSessionView.body`'s `GeometryReader` so
+    /// its visible surface now matches this recognizer's already-full-screen
+    /// geometry.
     static func corner(for point: CGPoint, in bounds: CGRect) -> Corner? {
         guard bounds.width > 0, bounds.height > 0 else { return nil }
 

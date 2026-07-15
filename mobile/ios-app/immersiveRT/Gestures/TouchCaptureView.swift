@@ -30,6 +30,25 @@ import UIKit
 /// signal is single-finger) — a second touch beginning while one is
 /// already tracked is ignored, so a rapid/overlapping second tap cannot
 /// clobber or desynchronize the tracked touch's own lifecycle.
+///
+/// REGRESSION FIX (on-device bug report: "even if I touch with one finger
+/// it sends the touch event continuously, without switching it off" — WORSE
+/// than the original double-tap bug, since even a normal single
+/// tap-and-release stopped terminating): `primaryTouch` was declared
+/// `weak`. Nothing in this app keeps a second, independent strong
+/// reference to a `UITouch` for the duration of a gesture — the system's
+/// own event-delivery machinery only guarantees a `UITouch` stays alive
+/// for the current `touchesBegan`/`touchesMoved`/`touchesEnded` call, not
+/// across calls. With only a `weak` reference stored here, the touch
+/// object could be deallocated between `touchesBegan` and the later
+/// `touchesEnded`/`touchesCancelled` call, silently nil-ing `primaryTouch`
+/// out from under `endTrackingIfNeeded(_:)` — its `guard let primaryTouch`
+/// would then fail, `onTouchChanged?(false, ...)` would never fire, and
+/// the touch signal would stay stuck `true` for every touch (not just a
+/// rapid double-tap). `CornerLongPressRecognizer` (this codebase's other
+/// raw-UIKit touch tracker, below) already gets this right by holding each
+/// tracked `UITouch` STRONGLY as a dictionary value — `primaryTouch` now
+/// mirrors that same strong-storage pattern.
 struct TouchCaptureView: UIViewRepresentable {
     /// `active` mirrors the touch's begin/end lifecycle; `location` is in
     /// this view's own coordinate space (top-left origin), matching what
@@ -51,7 +70,10 @@ struct TouchCaptureView: UIViewRepresentable {
 
     final class TrackingView: UIView {
         var onTouchChanged: ((Bool, CGPoint) -> Void)?
-        private weak var primaryTouch: UITouch?
+        /// Strongly held (see type-level REGRESSION FIX doc comment above) —
+        /// must outlive the gap between `touchesBegan` and the terminating
+        /// `touchesEnded`/`touchesCancelled` call for the same touch.
+        private var primaryTouch: UITouch?
 
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesBegan(touches, with: event)
