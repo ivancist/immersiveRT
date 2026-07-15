@@ -496,15 +496,30 @@ struct ActiveSessionView: View {
                 .onTapGesture { isMenuRevealed = false }
 
             VStack(spacing: 16) {
-                Button {
-                    viewModel.recenter()
-                    isMenuRevealed = false
-                } label: {
-                    Label("Recenter", systemImage: "location.viewfinder")
-                        .frame(maxWidth: .infinity)
+                // Bug fix (on-device UX report: "don't know why recenter
+                // button is also showed when session ended... the only
+                // action doable is going back"): Recenter only makes sense
+                // while there is a live ARKit-driven stream to re-zero
+                // (D-11) — gated on `isConnected` exactly like the
+                // Disconnect/Back button already branches on it below.
+                // When disconnected/errored/ended, the menu shows ONLY
+                // Back — the reveal gesture itself is left unchanged (D-12
+                // only needs to protect against accidentally disrupting an
+                // ACTIVE session; a terminal screen has nothing left to
+                // protect, but keeping one consistent reveal mechanism for
+                // both cases is simpler and lower-risk than special-casing
+                // navigation for the disconnected state).
+                if viewModel.isConnected {
+                    Button {
+                        viewModel.recenter()
+                        isMenuRevealed = false
+                    } label: {
+                        Label("Recenter", systemImage: "location.viewfinder")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("overlay-menu-recenter")
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("overlay-menu-recenter")
 
                 Button {
                     if viewModel.isConnected {
