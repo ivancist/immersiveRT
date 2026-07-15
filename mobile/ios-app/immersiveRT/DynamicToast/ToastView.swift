@@ -2,18 +2,56 @@ import SwiftUI
 
 extension View {
     /// duration
+    ///
+    /// `forceStatusBarHidden`: an ADDITIONAL, independent reason to keep the
+    /// status bar hidden regardless of whether a toast is currently
+    /// presented (D-13/connected-session chrome, `ActiveSessionView.swift`).
+    /// See `DynamicIslandToastViewModifier`'s doc comment for why this has
+    /// to live here rather than as a separate `.statusBar(hidden:)`/
+    /// `.toolbar(.hidden, for: .statusBar)` modifier applied elsewhere.
     @ViewBuilder
-    func dynamicIslandToast(isPresented: Binding<Bool>, duration: TimeInterval? = nil, value: Toast) -> some View {
+    func dynamicIslandToast(
+        isPresented: Binding<Bool>,
+        duration: TimeInterval? = nil,
+        forceStatusBarHidden: Bool = false,
+        value: Toast
+    ) -> some View {
         self.modifier(
-            DynamicIslandToastViewModifier(isPresented: isPresented, duration: duration, value: value)
+            DynamicIslandToastViewModifier(
+                isPresented: isPresented,
+                duration: duration,
+                value: value,
+                forceStatusBarHidden: forceStatusBarHidden
+            )
         )
     }
 }
 
+/// PLATFORM NOTE (on-device bug report: "you didn't hide the status bar" —
+/// this held even after switching to SwiftUI's native `.statusBar(hidden:)`
+/// modifier on `ActiveSessionView`'s own content): this toast overlay window
+/// (`PassThroughWindow`, tag 1009) is created once, the FIRST time ANY
+/// `dynamicIslandToast(...)` call site appears on screen (`ContentView`
+/// always has one, so it exists from app launch), is cached/reused for the
+/// app's whole lifetime via the `windowScene.windows.first(where: { $0.tag
+/// == 1009 })` lookup in `createOverlayWindow(_:)` below, and sits ABOVE the
+/// main `WindowGroup` window at the same window level. Because it is a
+/// SEPARATE `UIWindow` with its OWN `rootViewController`
+/// (`CustomHostingView`), its `prefersStatusBarHidden` — previously driven
+/// ONLY by whether a toast happens to be presented — wins over ANY
+/// status-bar preference set on the main window's content, including both
+/// the earlier `UIViewControllerRepresentable`-forwarding attempt AND
+/// SwiftUI's native `.statusBar(hidden:)`/`.toolbar(.hidden, for:
+/// .statusBar)` modifiers, which only affect the main window. There is only
+/// one real fix: route the "should the status bar be hidden" decision
+/// through THIS window's controller too. `forceStatusBarHidden` is that
+/// route — the actual visible-status-bar state is
+/// `isPresented || forceStatusBarHidden`, computed in `updateStatusBar()`.
 struct DynamicIslandToastViewModifier : ViewModifier {
     @Binding var isPresented: Bool
     var duration: TimeInterval?
     var value: Toast
+    var forceStatusBarHidden: Bool = false
     // View Properties
     @State private var overlayWindow: PassThroughWindow?
     @State private var overlayController: CustomHostingView?
@@ -30,14 +68,24 @@ struct DynamicIslandToastViewModifier : ViewModifier {
                     overlayWindow.toast = value
                 }
                 overlayWindow.isPresented = newValue
-                // Updating Status Bar
-                overlayController?.isStatusBarHidden = newValue
+                updateStatusBar()
                 scheduleAutoDismiss(newValue)
+            }
+            // `forceStatusBarHidden` can flip independently of any toast
+            // ever being presented (e.g. a session connecting with no
+            // toast on screen) — needs its own trigger to reach the
+            // overlay window's controller.
+            .onChange(of: forceStatusBarHidden, initial: true) { _, _ in
+                updateStatusBar()
             }
         // If the toast is closed outside we need to update the isPresented Property as well
             .onChange(of: overlayWindow?.isPresented) { oldValue, newValue in if let newValue, let overlayWindow, overlayWindow.toast?.id == value.id, newValue != isPresented {
                 isPresented = false
             }}
+    }
+
+    private func updateStatusBar() {
+        overlayController?.isStatusBarHidden = isPresented || forceStatusBarHidden
     }
     
     // Auto dismiss: hides the toast after the optional duration, cancelling if it's dismissed or re-presented first
@@ -54,7 +102,7 @@ struct DynamicIslandToastViewModifier : ViewModifier {
 
     private func createOverlayWindow(_ mainWindow: UIWindow) {
         guard let windowScene = mainWindow.windowScene else { return }
-        
+
         if let window = windowScene.windows.first(where: {$0.tag == 1009}) as? PassThroughWindow {
             print("Using Already Existing Window")
             self.overlayWindow = window
@@ -66,9 +114,14 @@ struct DynamicIslandToastViewModifier : ViewModifier {
             overlayWindow.isUserInteractionEnabled = true
             overlayWindow.tag = 1009
             createRootController(overlayWindow)
-            
+
             self.overlayWindow = overlayWindow
         }
+        // `overlayController` was nil (window not created yet) when the
+        // initial isPresented/forceStatusBarHidden onChange fired at
+        // attachment time, so that update was silently dropped — apply the
+        // current combined state now that the controller actually exists.
+        updateStatusBar()
     }
     
     private func createRootController(_ window: PassThroughWindow) {

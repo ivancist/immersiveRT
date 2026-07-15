@@ -472,6 +472,7 @@ struct ActiveSessionView: View {
             .dynamicIslandToast(
                 isPresented: $viewModel.isToastPresented,
                 duration: viewModel.currentToast.duration,
+                forceStatusBarHidden: viewModel.isConnected,
                 value: viewModel.currentToast
             )
         }
@@ -492,13 +493,18 @@ struct ActiveSessionView: View {
         .ignoresSafeArea()
         // Full-screen chrome while connected (time/battery/signal hidden),
         // normal status bar on Home and once the session ends/errors.
-        // Uses SwiftUI's native, directly-supported modifier rather than
-        // `ScreenEdgeGestureDeferringView`'s child-controller-forwarding
-        // trick — that trick's on-device behavior turned out to differ
-        // between `preferredScreenEdgesDeferringSystemGestures` (works) and
-        // `prefersStatusBarHidden` (did not), so status-bar hiding no
-        // longer depends on it at all.
-        .statusBar(hidden: viewModel.isConnected)
+        //
+        // NOT done via SwiftUI's native `.statusBar(hidden:)` here: this
+        // app's toast overlay window (`DynamicToast/ToastView.swift`) sits
+        // above the main window and independently controls the real,
+        // visible status bar via its own `CustomHostingView` — any
+        // preference set on THIS (main window) content, whether the earlier
+        // child-controller-forwarding attempt or the native modifier, is
+        // shadowed by that overlay window's own preference. The actual fix
+        // lives in `dynamicIslandToast(...)`'s `forceStatusBarHidden`
+        // parameter below, which routes this same `isConnected` condition
+        // through the overlay window's controller instead — see
+        // `DynamicIslandToastViewModifier`'s doc comment for the full trace.
     }
 
     private var statusText: String {
