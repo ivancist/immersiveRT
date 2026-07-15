@@ -20,8 +20,8 @@ import WebRTC
 /// and avoids cross-actor friction with `PeerConnectionManager`, which is
 /// an `NSObject`-based `RTCPeerConnectionDelegate`/`RTCDataChannelDelegate`
 /// (Objective-C delegate protocols do not mix well with Swift actors). The
-/// CoreMotion orientation callback fires on a dedicated background queue
-/// (`CoreMotionSource`'s own doc comment: "NOT the main actor") — this
+/// `ARPoseSource` pose callback fires on its own dedicated background
+/// queue (`ARPoseSource`'s own doc comment: "NOT the main actor") — this
 /// manager explicitly hops to `@MainActor` itself before touching any
 /// shared state (`startSensorLoopIfNeeded()`), exactly as that doc comment
 /// instructs callers to do.
@@ -83,7 +83,7 @@ final class TransportManager {
     private let dispatcher: ActiveTransportDispatcher
     private let peerFanOut: PeerFanOut
     private let heartbeatTimer: HeartbeatTimer
-    private let motionSource: CoreMotionSource
+    private let arPoseSource: ARPoseSource
     private let clock: TransportManagerClock
 
     private let makeWebTransport: (String, String) -> SignalingTransport
@@ -108,12 +108,18 @@ final class TransportManager {
     private let wtReconnectTimeout: TimeInterval
     private let wsReconnectTimeout: TimeInterval
 
-    // MARK: - Sensor encode/send loop state (D-09: orientation only)
+    // MARK: - Sensor encode/send loop state (D-01: ARKit orientation + position + driftConfidence)
 
     private var sensorLoopStarted = false
     private var seq: Int = 0
     private var sessionStart: Double = 0
     private var encodeBuffer: Data = SensorPacketEncoder.makeBuffer()
+
+    /// Touch-capture state read into every outgoing `SensorPacket` by
+    /// `handlePose(_:)`. Plan 04 populates this from `ActiveSessionView`'s
+    /// touch-capture surface — wiring it here now means that later change is
+    /// purely a data update, not a structural one.
+    private var touchState: (active: Bool, x: Double, y: Double) = (false, 0, 0)
 
     init(
         myId: String = UUID().uuidString,
@@ -126,7 +132,7 @@ final class TransportManager {
         makePeerFanOut: (SignalingTransport, String) -> PeerFanOut = { transport, myId in
             PeerConnectionManager(transport: transport, myId: myId)
         },
-        motionSource: CoreMotionSource = CoreMotionSource(),
+        arPoseSource: ARPoseSource = ARPoseSource(),
         heartbeatScheduler: HeartbeatScheduler = TimerHeartbeatScheduler(),
         heartbeatInterval: TimeInterval = 5.0,
         clock: TransportManagerClock = SystemTransportManagerClock(),
@@ -141,7 +147,7 @@ final class TransportManager {
         self.myId = myId
         self.makeWebTransport = makeWebTransport
         self.makeWebSocket = makeWebSocket
-        self.motionSource = motionSource
+        self.arPoseSource = arPoseSource
         self.clock = clock
         self.wsConnectTimeout = wsConnectTimeout
         self.wtConnectTimeout = wtConnectTimeout
@@ -504,42 +510,52 @@ final class TransportManager {
         state = .ended
     }
 
-    // MARK: - Sensor encode/send loop (D-09: orientation only, position/gesture/drift stay zero)
+    // MARK: - Sensor encode/send loop (D-01: ARKit orientation + position + driftConfidence)
 
-    /// Starts the CoreMotion-driven encode/send loop exactly once per
-    /// session (not restarted on reconnect — mirrors the web client never
-    /// re-attaching its `devicemotion` listener on reconnect either).
-    /// `CoreMotionSource`'s callback fires on its own dedicated background
-    /// queue (never the main actor); this explicitly hops back to
-    /// `@MainActor` per that class's own doc-comment guidance before
-    /// touching any shared state.
+    /// Starts the ARKit-driven encode/send loop exactly once per session
+    /// (not restarted on reconnect — mirrors the web client never
+    /// re-attaching its `devicemotion`/WebXR frame loop on reconnect
+    /// either). `ARPoseSource`'s callback fires on its own dedicated
+    /// background queue (never the main actor); this explicitly hops back
+    /// to `@MainActor` per that class's own doc-comment guidance (mandatory
+    /// per RESEARCH.md Pitfall 2/3) before touching any shared state.
     private func startSensorLoopIfNeeded() {
         guard !sensorLoopStarted else { return }
         sensorLoopStarted = true
         sessionStart = Date().timeIntervalSince1970 * 1000
 
-        motionSource.onOrientation = { [weak self] quaternion in
+        arPoseSource.onPose = { [weak self] pose in
             Task { @MainActor in
-                self?.handleOrientation(quaternion)
+                self?.handlePose(pose)
             }
         }
-        motionSource.start()
+        arPoseSource.start()
     }
 
-    /// One CoreMotion sample → one encoded `SensorPacket`, broadcast to
-    /// every currently open data channel. Only `qw`/`qx`/`qy`/`qz` carry
-    /// real data — `dx`/`dy`/`dz`/`px`/`py`/`pz`/`driftConfidence` are
-    /// NEVER set here and default to zero (D-01/D-09; real position data
-    /// lands in Phase 06.3's ARKit integration).
-    private func handleOrientation(_ quaternion: CoreMotionSource.Quaternion) {
+    /// One ARKit pose sample → one encoded `SensorPacket`, broadcast to
+    /// every currently open data channel. D-01: ARKit supersedes CoreMotion
+    /// for BOTH position and orientation, so `qw`/`qx`/`qy`/`qz`, `px`/`py`/
+    /// `pz`, and `driftConfidence` all carry real ARKit-derived data here
+    /// (unlike 06.2's `handleOrientation`, which left position/drift at
+    /// their zero defaults). `touchActive`/`touchX`/`touchY` read from
+    /// `touchState`, populated by Plan 04's touch-capture wiring — reading
+    /// it here now means that wiring is a data change, not a structural one.
+    private func handlePose(_ pose: ARPose) {
         let now = Date().timeIntervalSince1970 * 1000
         let packet = SensorPacket(
             seq: seq,
             timestamp: now - sessionStart,
-            qw: quaternion.qw,
-            qx: quaternion.qx,
-            qy: quaternion.qy,
-            qz: quaternion.qz
+            qw: pose.qw,
+            qx: pose.qx,
+            qy: pose.qy,
+            qz: pose.qz,
+            px: pose.px,
+            py: pose.py,
+            pz: pose.pz,
+            driftConfidence: pose.driftConfidence,
+            touchActive: touchState.active,
+            touchX: touchState.x,
+            touchY: touchState.y
         )
         seq += 1
 
@@ -555,7 +571,7 @@ final class TransportManager {
 
     // MARK: - Background lifecycle (Plan 08 Task 3, PHONE-07, Pitfall 4)
 
-    /// Stops the CoreMotion sensor loop and heartbeat while the app is
+    /// Stops the ARKit sensor loop and heartbeat while the app is
     /// backgrounded — the battery-conservation companion to
     /// `SessionViewModel.handleScenePhaseChange(_:)` resetting
     /// `isIdleTimerDisabled` to `false` (Pitfall 4: unlike the web Wake
@@ -565,20 +581,20 @@ final class TransportManager {
     /// connections or clear `registered` — those still track transport-
     /// level closes separately; `resumeFromBackground()` re-arms both.
     func pauseForBackground() {
-        motionSource.stop()
+        arPoseSource.stop()
         heartbeatTimer.stop()
     }
 
-    /// Resumes CoreMotion + the heartbeat after returning to the
+    /// Resumes ARKit tracking + the heartbeat after returning to the
     /// foreground, mirroring `visibilitychange` → visible re-arming
     /// `requestWakeLock()` and an immediate heartbeat send (phone.ts lines
     /// 1214-1225). No-op if the session was never registered/streaming —
-    /// `startSensorLoopIfNeeded()`'s `onOrientation` closure is still wired
-    /// from the original pairing, so `motionSource.start()` alone resumes
+    /// `startSensorLoopIfNeeded()`'s `onPose` closure is still wired from
+    /// the original pairing, so `arPoseSource.start()` alone resumes
     /// delivery without re-registering the handler.
     func resumeFromBackground() {
         guard registered else { return }
-        motionSource.start()
+        arPoseSource.start()
         heartbeatTimer.start()
         // `start()` only schedules the NEXT heartbeat `interval` (5s) out —
         // fire one immediately so a transport that died while backgrounded

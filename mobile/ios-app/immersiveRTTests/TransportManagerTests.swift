@@ -386,15 +386,15 @@ final class TransportManagerTests: XCTestCase {
         XCTAssertTrue(allMyIds.allSatisfy { $0 == "stable-id-123" })
     }
 
-    // MARK: - Task 1: sensor loop only touches orientation fields (D-09)
+    // MARK: - Task 2 (06.3-02): sensor loop is ARKit-driven, populates real position/drift (D-01)
 
-    /// Source-contract proof (real device-motion delivery is exercised
-    /// on-device, Plan 09): `handleOrientation` must never assign
-    /// `dx`/`dy`/`dz`/`px`/`py`/`pz`/`driftConfidence` — those stay at
-    /// `SensorPacket`'s zero defaults per D-01/D-09. Mirrors the
+    /// Source-contract proof (real ARKit pose delivery is exercised
+    /// on-device, Plan 03): `handlePose` MUST assign `px`/`py`/`pz`/
+    /// `driftConfidence` from the incoming `ARPose` — the D-01 supersession
+    /// of 06.2's CoreMotion-only, position-stays-zero behavior. Mirrors the
     /// `PeerConnectionManagerTests` "source contract" pattern used for
     /// `maxPacketLifeTime`.
-    func test_sensorLoop_neverSetsPositionGestureOrDrift_sourceContract() throws {
+    func test_handlePose_setsPositionAndDriftConfidence_sourceContract() throws {
         let source = try String(
             contentsOfFile: #filePath.replacingOccurrences(
                 of: "immersiveRTTests/TransportManagerTests.swift",
@@ -402,17 +402,38 @@ final class TransportManagerTests: XCTestCase {
             ),
             encoding: .utf8
         )
-        guard let range = source.range(of: "func handleOrientation") else {
-            XCTFail("handleOrientation not found in TransportManager.swift")
+        guard let range = source.range(of: "func handlePose") else {
+            XCTFail("handlePose not found in TransportManager.swift")
             return
         }
         let body = source[range.lowerBound...]
-        for field in ["dx:", "dy:", "dz:", "px:", "py:", "pz:", "driftConfidence:"] {
-            XCTAssertFalse(
+        for field in ["px:", "py:", "pz:", "driftConfidence:"] {
+            XCTAssertTrue(
                 body.contains(field),
-                "handleOrientation must never set \(field) — D-09 requires these stay zero via SensorPacket's defaults"
+                "handlePose must set \(field) from the ARPose — D-01 requires real ARKit position/drift on the wire"
             )
         }
+    }
+
+    /// Source-contract proof: `startSensorLoopIfNeeded` must wire
+    /// `arPoseSource.onPose` and must NOT wire `motionSource.onOrientation`
+    /// — the sensor send loop is ARKit-driven, not CoreMotion-driven, as of
+    /// this plan (D-01).
+    func test_startSensorLoopIfNeeded_wiresARPoseSource_notMotionSource() throws {
+        let source = try String(
+            contentsOfFile: #filePath.replacingOccurrences(
+                of: "immersiveRTTests/TransportManagerTests.swift",
+                with: "immersiveRT/Transport/TransportManager.swift"
+            ),
+            encoding: .utf8
+        )
+        guard let range = source.range(of: "func startSensorLoopIfNeeded") else {
+            XCTFail("startSensorLoopIfNeeded not found in TransportManager.swift")
+            return
+        }
+        let body = source[range.lowerBound...]
+        XCTAssertTrue(body.contains("arPoseSource.onPose"), "startSensorLoopIfNeeded must wire arPoseSource.onPose (D-01)")
+        XCTAssertFalse(body.contains("motionSource.onOrientation"), "startSensorLoopIfNeeded must no longer wire motionSource.onOrientation (D-01 supersedes CoreMotion)")
     }
 
     // MARK: - Task 2: attemptReconnect() guard + retry shape (attemptReconnect(), phone.ts:507-631)
