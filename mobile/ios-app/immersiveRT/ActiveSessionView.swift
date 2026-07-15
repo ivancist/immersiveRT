@@ -305,6 +305,20 @@ struct ActiveSessionView: View {
                     viewModel.updateTouchState(active: active, x: normalized.x, y: normalized.y)
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height)
+                // Defense-in-depth for the Bug A regression fix
+                // (`TouchCaptureView`'s doc comment): an explicit, constant
+                // `.id(...)` pins this view's SwiftUI identity so it is
+                // NEVER torn down/recreated by body re-evaluation (the
+                // 0.25s poll timer, `touchActive`/`isMenuRevealed` toggling,
+                // etc.) regardless of its position among the ZStack's
+                // conditional siblings — a torn-down `TrackingView` mid-touch
+                // would not reliably receive a terminating `touchesEnded`/
+                // `touchesCancelled`, which was the leading hypothesis this
+                // round for how the touch signal could get stuck. The actual
+                // confirmed root cause was `primaryTouch` being `weak`
+                // (fixed in `TouchCaptureView.swift`); this `.id(...)` costs
+                // nothing and removes an entire class of residual risk.
+                .id("touch-capture-surface")
 
                 // Bug fix: lets touches at the true physical top corners
                 // (where iOS reserves a Control Center/Notification Center
