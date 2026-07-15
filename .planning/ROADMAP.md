@@ -262,7 +262,7 @@ Plans:
 **Goal:** Swap the native iOS phone client's position source from CoreMotion dead-reckoning (the Phase 06.2 parity baseline) to ARKit `ARSession` world tracking for precise 6DOF position, keeping orientation semantics compatible with the existing desktop decode/SLERP pipeline (Phase 6) and SDK naming (Phase 7 — `deadReckoningPosition`/`driftConfidence`). This is the native-companion-app escape hatch Phase 06.1 explicitly anticipated for iOS (Safari has no WebXR `immersive-ar`), invoked now instead of the planned web-based VIO/SLAM research spike. Includes a mandatory on-device ARKit tracking-precision verification checkpoint that is a go/no-go gate for the project, mirroring Phase 06.1's Wave 3 on-device checkpoint pattern.
 **Requirements**: SENS-V2-03, SDK-05 (reused from Phase 06.1); SENS-06 (native-parity for the already-Complete Phase 5 web touch-capture requirement — no distinct new requirement ID, per CONTEXT.md/RESEARCH.md)
 **Depends on:** Phase 06.2 (native transport parity must land first); references Phase 06.1's WebXR pose-tracking conventions (webxr.ts, phone.ts D-02/D-03/D-05/D-06) as a native-porting guide
-**Plans:** 3/8 plans executed
+**Plans:** 5/8 plans executed
 
 Plans:
 
@@ -280,8 +280,8 @@ Plans:
 
 **Wave 4** *(blocked on 06.3-03 GO)*
 
-- [ ] 06.3-04-PLAN.md — Full-screen touch capture + local feedback (D-03/D-04/D-05/D-06, SENS-06)
-- [ ] 06.3-07-PLAN.md — Corner long-press gesture recognizer + hit-test tests (D-12)
+- [x] 06.3-04-PLAN.md — Full-screen touch capture + local feedback (D-03/D-04/D-05/D-06, SENS-06)
+- [x] 06.3-07-PLAN.md — Corner long-press gesture recognizer + hit-test tests (D-12)
 
 **Wave 5** *(blocked on 06.3-04)*
 
