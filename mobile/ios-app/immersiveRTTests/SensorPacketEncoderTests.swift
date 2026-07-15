@@ -44,6 +44,69 @@ final class SensorPacketEncoderTests: XCTestCase {
         }
     }
 
+    // MARK: - Non-zero position/drift regression (SDK-05)
+
+    /// Regression guard for the ARKit position now flowing through the
+    /// encoder (06.3-02 Task 2): a packet with non-zero `px`/`py`/`pz` and
+    /// `driftConfidence` must produce non-zero bytes in the position region
+    /// (offsets 21-26, float16) and the drift region (offsets 27-30,
+    /// float32), while offsets 0-20 (schema/seq/timestamp/quaternion) and
+    /// the touch region (31-35) stay consistent with the unchanged D-14
+    /// layout — the complement of `test_quaternionOnlyPacket_writesZeroAtStubbedOffsets`'s
+    /// zero-stub guarantee. Proves the frozen wire schema still carries real
+    /// position/drift correctly without any change to `SensorPacketEncoder.swift`.
+    func test_nonZeroPositionAndDrift_writesExpectedBytesAtPositionOffsets() {
+        let packet = SensorPacket(
+            seq: 42,
+            timestamp: 123456,
+            qw: 1, qx: 0, qy: 0, qz: 0,
+            px: 0.5, py: -0.25, pz: 1.0,
+            driftConfidence: 0.5,
+            touchActive: true, touchX: 0.25, touchY: 0.75
+        )
+
+        var buf = SensorPacketEncoder.makeBuffer()
+        SensorPacketEncoder.encodePacket(packet, into: &buf)
+        let bytes = [UInt8](buf)
+
+        XCTAssertEqual(bytes.count, SensorPacketEncoder.bufSize)
+
+        // offset 0: schema version.
+        XCTAssertEqual(bytes[0], 1)
+
+        // offsets 21-26: px/py/pz (float16 each), must NOT be all-zero given
+        // the non-zero position values above.
+        let positionBytes = bytes[21..<27]
+        XCTAssertTrue(positionBytes.contains { $0 != 0 }, "Expected non-zero bytes in the position region (offsets 21-26) for non-zero px/py/pz")
+
+        // offset 27-30: driftConfidence (float32), must NOT be all-zero
+        // given driftConfidence = 0.5.
+        let driftBytes = bytes[27..<31]
+        XCTAssertTrue(driftBytes.contains { $0 != 0 }, "Expected non-zero bytes in the drift region (offsets 27-30) for driftConfidence 0.5")
+
+        // offset 31: touchActive flag — sanity-checks the touch region
+        // wasn't disturbed by the position/drift encoding path.
+        XCTAssertEqual(bytes[31], 1)
+
+        // Decode the float16 position triple directly to confirm the exact
+        // values round-trip (not just "some non-zero byte").
+        func decodeFloat16(_ lo: UInt8, _ hi: UInt8) -> Float {
+            let bits = UInt16(lo) | (UInt16(hi) << 8)
+            return Float(Float16(bitPattern: bits))
+        }
+        let decodedPx = decodeFloat16(bytes[21], bytes[22])
+        let decodedPy = decodeFloat16(bytes[23], bytes[24])
+        let decodedPz = decodeFloat16(bytes[25], bytes[26])
+        XCTAssertEqual(decodedPx, 0.5, accuracy: 0.001)
+        XCTAssertEqual(decodedPy, -0.25, accuracy: 0.001)
+        XCTAssertEqual(decodedPz, 1.0, accuracy: 0.001)
+
+        // Decode the float32 driftConfidence to confirm the exact value.
+        let driftBits = UInt32(bytes[27]) | (UInt32(bytes[28]) << 8) | (UInt32(bytes[29]) << 16) | (UInt32(bytes[30]) << 24)
+        let decodedDrift = Float32(bitPattern: driftBits)
+        XCTAssertEqual(decodedDrift, 0.5, accuracy: 0.0001)
+    }
+
     // MARK: - Fixture loading
 
     private struct FixtureInput: Decodable {
