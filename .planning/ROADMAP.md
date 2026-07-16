@@ -312,7 +312,36 @@ Plans:
   5. `platform.getRawInput(playerId).orientationRaw` returns the unsmoothed quaternion — a game that applies its own SLERP can bypass the SDK's interpolation
   6. The public API surface uses `deadReckoningPosition` (not `position`) and `driftConfidence` — no API surface leaks the word "position" without the drift qualifier
 
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 07-01-PLAN.md — npm workspace + Vite library-mode packaging pipeline + vite-plugin-dts legitimacy gate (SDK-01)
+
+**Wave 2** *(blocked on 07-01)*
+
+- [ ] 07-02-PLAN.md — Pure-layer extraction: types/schema/decode/encode/playerStore moved + hand-written slerp + relocated tests (SDK-05)
+
+**Wave 3** *(blocked on 07-02)*
+
+- [ ] 07-03-PLAN.md — API core: internal tick + getPlayerInput/getRawInput + typed EventTarget events + strict-typecheck fixture (SDK-01/02/03/06)
+
+**Wave 4** *(blocked on 07-03)*
+
+- [ ] 07-04-PLAN.md — Signaling transport extraction: WT-first/WS-fallback connect/joinRoom/reconnect/leaveRoom + onSignal passthrough (SDK-02/03)
+
+**Wave 5** *(blocked on 07-04)*
+
+- [ ] 07-05-PLAN.md — WebRTC fan-out + verbatim guard-first decode→store pipeline + player lifecycle events (SDK-02/03)
+
+**Wave 6** *(blocked on 07-05)*
+
+- [ ] 07-06-PLAN.md — Latency overlay: RTT/ICE from getStats+live pc, jitter/loss computed from seq/timestamp, textContent-only DOM (SDK-04)
+
+**Wave 7** *(blocked on 07-06)*
+
+- [ ] 07-07-PLAN.md — client consumes the SDK (room.ts + scene.ts, axis remap preserved) + live on-device verification (SDK-01/04)
 
 ### Phase 8: Demo Game
 
@@ -343,5 +372,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. Phone Bootstrap and WebRTC Channels | 1/3 | In Progress|  |
 | 5. Sensor Fusion and Packet Encoding | 7/7 | Complete   | 2026-07-09 |
 | 6. Desktop Receive, Decode, and Rendering | 5/5 | Complete   | 2026-07-10 |
-| 7. SDK Public API | 0/TBD | Not started | - |
+| 7. SDK Public API | 0/7 | Not started | - |
 | 8. Demo Game | 0/TBD | Not started | - |
